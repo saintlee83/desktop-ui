@@ -1,0 +1,150 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronsUpDown, Keyboard, LogIn, LogOut, Monitor, Moon, Settings, Sun, User } from "lucide-react";
+import { useStore, type Theme } from "../lib/store";
+import { toast } from "../lib/toast";
+import { cx, menuKeyDown, mod, useClickOutside, usePresence } from "../lib/util";
+import { Keys, Segmented } from "./ui";
+
+/** Initials on a color derived from the name, so each profile gets a stable hue. */
+export function Avatar({ name, size = 28 }: { name: string; size?: number }) {
+  const initials =
+    name
+      .trim()
+      .split(/\s+/)
+      .map((w) => Array.from(w)[0] ?? "")
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)!) | 0;
+  const hue = Math.abs(hash) % 360;
+  return (
+    <span
+      className="avatar"
+      aria-hidden
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.4),
+        background: `linear-gradient(135deg, hsl(${hue} 70% 62%), hsl(${(hue + 40) % 360} 65% 48%))`,
+      }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+const THEMES: { id: Theme; label: string; icon: typeof Sun }[] = [
+  { id: "light", label: "Light", icon: Sun },
+  { id: "dark", label: "Dark", icon: Moon },
+  { id: "system", label: "System", icon: Monitor },
+];
+
+/** Account button pinned to the bottom-left of the sidebar, with a menu that opens upward. */
+export function AccountMenu() {
+  const account = useStore((s) => s.account);
+  const theme = useStore((s) => s.settings.theme);
+  const { openSettings, updateSettings, signOut } = useStore.getState();
+  const [open, setOpen] = useState(false);
+  const { mounted, closing } = usePresence(open, 120);
+  const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useClickOutside(ref, close, open);
+
+  // Focus the menu so arrow keys work straight away.
+  useEffect(() => {
+    if (open) menu.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  if (!account) {
+    return (
+      <button className="account-signin" onClick={() => openSettings("account")}>
+        <LogIn size={15} />
+        <span>Sign in</span>
+      </button>
+    );
+  }
+
+  const choose = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div className="account popover-anchor" ref={ref}>
+      <button
+        className={cx("account-button", open && "open")}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <Avatar name={account.name} />
+        <span className="account-text">
+          <span className="account-name">{account.name}</span>
+          <span className="account-sub">{account.plan} plan</span>
+        </span>
+        <ChevronsUpDown size={14} className="account-chev" />
+      </button>
+
+      {mounted && (
+        <div
+          ref={menu}
+          className={cx("popover account-menu", closing && "closing")}
+          role="menu"
+          aria-label="Account"
+          tabIndex={-1}
+          data-esc-layer
+          onKeyDown={(e) => {
+            // Arrow keys inside the theme switch belong to it.
+            if (!(e.target as Element).closest(".segmented")) menuKeyDown(e);
+          }}
+        >
+          <div className="account-menu-header">
+            <Avatar name={account.name} size={34} />
+            <div className="account-text">
+              <span className="account-name">{account.name}</span>
+              <span className="account-sub">{account.email}</span>
+            </div>
+          </div>
+          <div className="menu-sep" />
+          <button role="menuitem" className="menu-item" onClick={choose(() => openSettings("account"))}>
+            <User size={15} />
+            <span className="menu-item-label">Account</span>
+          </button>
+          <button role="menuitem" className="menu-item" onClick={choose(() => openSettings("general"))}>
+            <Settings size={15} />
+            <span className="menu-item-label">Settings</span>
+            <Keys combo={`${mod},`} />
+          </button>
+          <button role="menuitem" className="menu-item" onClick={choose(() => openSettings("shortcuts"))}>
+            <Keyboard size={15} />
+            <span className="menu-item-label">Keyboard shortcuts</span>
+          </button>
+          <div className="menu-row">
+            <span className="menu-item-label">Theme</span>
+            <Segmented
+              className="icons"
+              label="Theme"
+              value={theme}
+              onChange={(t) => updateSettings({ theme: t })}
+              options={THEMES.map((t) => ({ id: t.id, icon: t.icon, hint: t.label }))}
+            />
+          </div>
+          <div className="menu-sep" />
+          <button
+            role="menuitem"
+            className="menu-item danger"
+            onClick={choose(() => {
+              signOut();
+              toast("Logged out");
+            })}
+          >
+            <LogOut size={15} />
+            <span className="menu-item-label">Log out</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
