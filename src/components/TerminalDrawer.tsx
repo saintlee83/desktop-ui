@@ -1,14 +1,14 @@
 import { useRef } from "react";
 import { ChevronDown, Plus, SquareTerminal, X } from "lucide-react";
-import { cliActive, useStore } from "../lib/store";
-import { isAgentSection } from "../lib/types";
+import { folderName, shortPath } from "../lib/folders";
+import { cliActive, isAgentic, useStore } from "../lib/store";
 import { cx } from "../lib/util";
 import { TerminalView } from "./TerminalView";
 import { IconButton } from "./ui";
 
-/** Resizable bottom drawer with interactive terminal tabs (Work and Code sections). */
+/** Resizable bottom drawer with interactive terminal tabs, wherever the agent has tools. */
 export function TerminalDrawer() {
-  const visible = useStore((s) => s.terminalOpen && isAgentSection(s.section) && !cliActive(s));
+  const visible = useStore((s) => s.terminalOpen && isAgentic(s) && !cliActive(s));
   const terminals = useStore((s) => s.terminals);
   const active = useStore((s) => s.activeTerminal);
   const height = useStore((s) => s.terminalHeight);
@@ -51,12 +51,14 @@ export function TerminalDrawer() {
             aria-selected={t.id === active}
             className={cx("term-tab", t.id === active && "on")}
             onClick={() => setActiveTerminal(t.id)}
+            title={t.cwd ? shortPath(t.cwd) : undefined}
           >
             <SquareTerminal size={13} />
             <span>
               {t.shell ?? "shell"}
               {terminals.length > 1 ? ` ${i + 1}` : ""}
             </span>
+            {t.cwd && <span className="term-tab-cwd">{folderName(t.cwd)}</span>}
             <button
               className="term-tab-close"
               aria-label="Close terminal"
@@ -82,6 +84,7 @@ export function TerminalDrawer() {
           <TerminalView
             key={t.id}
             active={visible && t.id === active}
+            cwd={t.cwd}
             onSpawn={(s) => setTerminalShell(t.id, s.shell)}
             // Like VS Code: when the shell exits, its tab closes.
             onExit={() => closeTerminal(t.id)}

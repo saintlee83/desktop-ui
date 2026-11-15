@@ -91,6 +91,23 @@ fn summarize(prompt: &str) -> String {
     }
 }
 
+/// How the agent refers to where it works: the session's folder by name, if it has one.
+fn place(req: &RunRequest) -> String {
+    let name = req.folder.as_deref().and_then(|f| f.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next());
+    match name {
+        Some(name) if !name.is_empty() => format!("`{name}`"),
+        _ => "the codebase".into(),
+    }
+}
+
+/// A closing sentence for the first thought when the session's project has instructions.
+fn heed(req: &RunRequest) -> String {
+    match req.instructions.as_deref().map(str::trim) {
+        Some(text) if !text.is_empty() => format!(" The project's instructions apply: \"{}\".", summarize(text)),
+        _ => String::new(),
+    }
+}
+
 pub fn script(req: &RunRequest) -> Vec<Step> {
     match req.mode {
         Mode::Chat => chat(req),
@@ -104,7 +121,8 @@ fn chat(req: &RunRequest) -> Vec<Step> {
     vec![
         Step::Think(format!(
             "The user asked: \"{topic}\". This is a conversational request, so no tools are needed. \
-             I'll give a structured answer and show off the renderer: a short list, a table, and a code sample."
+             I'll give a structured answer and show off the renderer: a short list, a table, and a code sample.{heed}",
+            heed = heed(req),
         )),
         Step::Say(format!(
             "Here's a response from **{model}** (mock provider).\n\n\
@@ -112,7 +130,7 @@ You asked about: _{topic}_\n\n\
 ### Key points\n\n\
 1. Responses stream token-by-token over a Tauri `Channel`.\n\
 2. Markdown, tables, and fenced code are rendered with syntax highlighting.\n\
-3. Switch to **Work** to see tool calls, diffs, and permission prompts.\n\n\
+3. Add a folder, or switch to **Code**, to see tool calls, diffs, and permission prompts.\n\n\
 | Layer | Tech | Responsibility |\n\
 |---|---|---|\n\
 | Shell | Tauri 2 (Rust) | windowing, IPC, agent runtime |\n\
@@ -134,9 +152,10 @@ fn plan(req: &RunRequest) -> Vec<Step> {
     let topic = summarize(&req.prompt);
     vec![
         Step::Think(format!(
-            "Plan mode: I must not modify anything. Task: \"{topic}\". I'll explore the relevant code read-only, then propose concrete steps."
+            "Plan mode: I must not modify anything. Task: \"{topic}\". I'll explore the relevant code read-only, then propose concrete steps.{heed}",
+            heed = heed(req),
         )),
-        Step::Say("I'll look around the codebase first (read-only).\n\n".into()),
+        Step::Say(format!("I'll look around {} first (read-only).\n\n", place(req))),
         search_tool(),
         read_tool(),
         Step::Say(
@@ -157,9 +176,10 @@ fn agent(req: &RunRequest) -> Vec<Step> {
     vec![
         Step::Think(format!(
             "The task is: \"{topic}\". Before editing anything I need to find where session titles are produced \
-             and understand the current behaviour. A grep for the title helper is the quickest way in."
+             and understand the current behaviour. A grep for the title helper is the quickest way in.{heed}",
+            heed = heed(req),
         )),
-        Step::Say("I'll start by exploring the codebase to find the relevant code.\n\n".into()),
+        Step::Say(format!("I'll start by exploring {} to find the relevant code.\n\n", place(req))),
         search_tool(),
         read_tool(),
         Step::Think(

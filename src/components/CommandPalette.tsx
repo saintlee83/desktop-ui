@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowDown, ArrowUp, Bot, Copy, Keyboard, ListFilter, Map as MapIcon, MessagesSquare, Moon, PanelLeft, PanelRight, Search, SearchX, Settings, SquarePen, Sun, Cpu, TextCursorInput, Trash2, ZoomIn, ZoomOut, Maximize2, SquareTerminal, TerminalSquare } from "lucide-react";
+import { AppWindow, ArrowDown, ArrowUp, Bot, Contrast, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, Keyboard, Layers, ListFilter, Map as MapIcon, MessagesSquare, Moon, PanelLeft, PanelRight, Search, SearchX, Settings, Settings2, SquarePen, Sun, Cpu, TextCursorInput, Trash2, ZoomIn, ZoomOut, Maximize2, SquareTerminal, TerminalSquare } from "lucide-react";
 import * as actions from "../lib/actions";
+import { folderName } from "../lib/folders";
 import { SECTIONS, sectionInfo } from "../lib/sections";
-import { cliActive, useStore } from "../lib/store";
+import { cliActive, currentFolder, isAgentic, useStore } from "../lib/store";
+import { SCHEMES, schemeInfo } from "../lib/theme";
 import { cx, isMac, mod, modShift, relativeTime, trapTab, usePresence, useRestoreFocus, zoomKeys } from "../lib/util";
 import { Highlight, Keys } from "./ui";
 
@@ -21,6 +23,7 @@ interface Item {
 export function CommandPalette() {
   const open = useStore((s) => s.paletteOpen);
   const sessions = useStore((s) => s.sessions);
+  const projects = useStore((s) => s.projects);
   const models = useStore((s) => s.models);
   const model = useStore((s) => s.model);
   const [query, setQuery] = useState("");
@@ -35,6 +38,12 @@ export function CommandPalette() {
     const noun = s.section === "chat" ? "chat" : "session";
     const cli = cliActive(s);
     const open = !cli && s.sessions.some((x) => x.id === s.activeId);
+    const folder = currentFolder(s);
+    const project = s.projects.find((p) => p.id === s.projectId);
+    const scheme = schemeInfo(s.settings.scheme).id;
+    // Modes only apply where the agent has tools; in a plain chat choosing one asks for a folder.
+    const moded = !cli && isAgentic(s);
+    const projectName = (id: string | null | undefined) => s.projects.find((p) => p.id === id)?.name;
     return [
       { id: "new", label: `New ${noun}`, group: "Actions", icon: SquarePen, keys: `${mod}N`, run: s.newSession },
       { id: "new-window", label: "New window", group: "Actions", icon: AppWindow, keys: `${modShift}N`, run: actions.newWindow },
@@ -54,17 +63,34 @@ export function CommandPalette() {
       { id: "settings", label: "Open settings", group: "Actions", icon: Settings, keys: `${mod},`, run: () => s.setSettingsOpen(true) },
       { id: "shortcuts", label: "Keyboard shortcuts", group: "Actions", icon: Keyboard, keys: `${mod}/`, run: () => s.openSettings("shortcuts") },
       { id: "terminal", label: "Toggle terminal", group: "Actions", icon: SquareTerminal, keys: "Ctrl+`", run: () => s.toggleTerminal() },
-      { id: "terminal-new", label: "New terminal", group: "Actions", icon: TerminalSquare, keys: "Ctrl+Shift+`", run: () => { s.enterAgentSection(); s.newTerminal(); } },
+      { id: "terminal-new", label: "New terminal", group: "Actions", icon: TerminalSquare, keys: "Ctrl+Shift+`", run: () => { s.enterAgent(); s.newTerminal(); } },
+      ...(cli
+        ? []
+        : [
+            { id: "folder", label: folder ? `Change folder (${folderName(folder)})…` : "Add folder…", group: "Actions", icon: FolderOpen, keys: `${mod}O`, run: () => void actions.addFolder() },
+            ...(folder ? [{ id: "folder-remove", label: "Remove folder", group: "Actions", icon: FolderMinus, run: () => s.setFolder(null) }] : []),
+          ]),
       { id: "zoom-in", label: "Zoom in", group: "Actions", icon: ZoomIn, keys: zoomKeys.in, run: () => s.zoomBy(1) },
       { id: "zoom-out", label: "Zoom out", group: "Actions", icon: ZoomOut, keys: zoomKeys.out, run: () => s.zoomBy(-1) },
       { id: "zoom-reset", label: "Reset zoom", group: "Actions", icon: Maximize2, keys: zoomKeys.reset, run: s.resetZoom },
       ...SECTIONS.map((x) => ({ id: `go-${x.id}`, label: `Go to ${x.label}`, group: "Sections", icon: x.icon, keys: `${mod}${x.key}`, run: () => s.setSection(x.id) })),
-      { id: "mode-agent", label: "Mode: Agent", group: "Modes", icon: Bot, keys: s.mode === "plan" && !cli ? `${modShift}M` : undefined, hint: s.mode === "agent" && !cli ? "current" : undefined, run: () => actions.chooseMode("agent") },
-      { id: "mode-plan", label: "Mode: Plan", group: "Modes", icon: MapIcon, keys: s.mode === "agent" && !cli ? `${modShift}M` : undefined, hint: s.mode === "plan" && !cli ? "current" : undefined, run: () => actions.chooseMode("plan") },
+      { id: "project-new", label: "New project…", group: "Projects", icon: FolderPlus, run: () => s.openProjectDialog() },
+      ...(project
+        ? [
+            { id: "project-edit", label: `Edit project “${project.name}”…`, group: "Projects", icon: Settings2, run: () => s.openProjectDialog(project.id) },
+            { id: "project-all", label: `Show all ${noun}s`, group: "Projects", icon: Layers, run: () => s.setProject(null) },
+          ]
+        : []),
+      ...s.projects
+        .filter((p) => p.id !== s.projectId)
+        .map((p) => ({ id: `project-${p.id}`, label: `Go to project: ${p.name}`, group: "Projects", icon: Folder, hint: p.folder ? folderName(p.folder) : undefined, run: () => s.setProject(p.id) })),
+      { id: "mode-agent", label: "Mode: Agent", group: "Modes", icon: Bot, keys: s.mode === "plan" && moded ? `${modShift}M` : undefined, hint: s.mode === "agent" && moded ? "current" : undefined, run: () => actions.chooseMode("agent") },
+      { id: "mode-plan", label: "Mode: Plan", group: "Modes", icon: MapIcon, keys: s.mode === "agent" && moded ? `${modShift}M` : undefined, hint: s.mode === "plan" && moded ? "current" : undefined, run: () => actions.chooseMode("plan") },
       cli
         ? { id: "mode-gui", label: "Back to the chat", group: "Modes", icon: MessagesSquare, keys: `${modShift}T`, run: actions.toggleCli }
         : { id: "mode-terminal", label: "Mode: Terminal (CLI agent in Code)", group: "Modes", icon: SquareTerminal, keys: `${modShift}T`, run: actions.toggleCli },
       ...models.map((m) => ({ id: `model-${m.id}`, label: `Model: ${m.name}`, group: "Models", icon: Cpu, hint: m.id === model ? `${m.provider} · current` : m.provider, run: () => s.setModel(m.id) })),
+      ...SCHEMES.map((x) => ({ id: `scheme-${x.id}`, label: `Color scheme: ${x.name}`, group: "Color schemes", icon: Contrast, hint: x.id === scheme ? "current" : x.hint, run: () => s.updateSettings({ scheme: x.id }) })),
       ...[...sessions]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((x) => ({
@@ -72,12 +98,12 @@ export function CommandPalette() {
           label: x.title,
           group: "Recent",
           icon: sectionInfo(x.section).icon,
-          hint: `${sectionInfo(x.section).label} · ${relativeTime(x.updatedAt)}`,
+          hint: [projectName(x.projectId), sectionInfo(x.section).label, relativeTime(x.updatedAt)].filter(Boolean).join(" · "),
           run: () => s.selectSession(x.id),
         })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions, models, model, open]);
+  }, [sessions, projects, models, model, open]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -86,12 +112,16 @@ export function CommandPalette() {
     return items.filter((i) => words.every((w) => `${i.label} ${i.group}`.toLowerCase().includes(w)));
   }, [items, query]);
 
-  useEffect(() => {
+  // Each opening starts empty. Reset while rendering, not in an effect: an effect runs a moment
+  // after the palette is on screen, and a key typed in that moment would be added to the old query.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setQuery("");
       setIndex(0);
     }
-  }, [open]);
+  }
   useEffect(() => setIndex(0), [query]);
   useEffect(() => {
     listRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });

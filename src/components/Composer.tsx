@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type Dra
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ArrowUp, FileUp, Paperclip, Square, X } from "lucide-react";
 import { inTauri } from "../lib/agent";
-import { cliActive, isStreaming, messageText, useStore } from "../lib/store";
-import { isAgentSection } from "../lib/types";
-import { basename, cx, formatTokens, withViewTransition } from "../lib/util";
+import { folderInfo } from "../lib/folders";
+import { cliActive, currentFolder, isStreaming, kindOf, messageText, useStore } from "../lib/store";
+import { basename, cx, formatTokens, mod, withViewTransition } from "../lib/util";
+import { FolderPicker } from "./FolderPicker";
 import { ModePicker } from "./ModePicker";
 import { Picker } from "./Picker";
 import { IconButton, Keys, tip } from "./ui";
@@ -33,11 +34,14 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
   const running = useStore((s) => (s.activeId ? !!s.runs[s.activeId] : false));
   const mode = useStore((s) => s.mode);
   const section = useStore((s) => s.section);
+  // A chat is plain conversation until it has a folder; then the agent works in it, with modes.
+  const kind = useStore(kindOf);
+  const folder = useStore(currentFolder);
   // Behind Code's terminal view the composer stays mounted (it keeps its draft) but is not on screen.
   const offscreen = useStore(cliActive);
   // Another window is running this session: it can be watched here, not written to.
   const elsewhere = useStore((s) => !!s.activeId && !s.runs[s.activeId] && isStreaming(s.sessions.find((x) => x.id === s.activeId)));
-  const { send, stop } = useStore.getState();
+  const { send, stop, setFolder } = useStore.getState();
   const [text, setText] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [dropping, setDropping] = useState(false);
@@ -64,6 +68,13 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
   if (wasRunning !== running) {
     setWasRunning(running);
     setSwapped(true);
+  }
+  // Likewise the mode menu eases in when a folder turns the chat into work, not on every mount.
+  const [wasKind, setWasKind] = useState(kind);
+  const [turned, setTurned] = useState(false);
+  if (wasKind !== kind) {
+    setWasKind(kind);
+    setTurned(true);
   }
 
   useEffect(() => {
@@ -94,7 +105,14 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
         if (payload.type === "enter" || payload.type === "over") setDropping(true);
         else setDropping(false);
         if (payload.type === "drop") {
-          addFiles(payload.paths.map(basename));
+          // A dropped folder becomes the folder to work in; anything else is attached.
+          void Promise.all(payload.paths.map((path) => folderInfo(path).then((info) => ({ path, dir: info.isDir }), () => ({ path, dir: false })))).then(
+            (dropped) => {
+              const dir = dropped.find((d) => d.dir);
+              if (dir) setFolder(dir.path);
+              addFiles(dropped.filter((d) => !d.dir).map((d) => basename(d.path)));
+            },
+          );
           taRef.current?.focus();
         }
       })
@@ -107,7 +125,7 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
       dead = true;
       unlisten?.();
     };
-  }, [addFiles]);
+  }, [addFiles, setFolder]);
 
   const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes("Files");
   const onDragEnter = (e: DragEvent) => {
@@ -126,7 +144,13 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
     e.preventDefault();
     dragDepth.current = 0;
     setDropping(false);
-    addFiles(Array.from(e.dataTransfer.files).map((f) => f.name));
+    // A browser tells folders from files, but only gives their names.
+    const entries = Array.from(e.dataTransfer.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => ({ name: item.getAsFile()?.name ?? "", dir: !!item.webkitGetAsEntry?.()?.isDirectory }));
+    const dir = entries.find((x) => x.dir && x.name);
+    if (dir) setFolder(dir.name);
+    addFiles(entries.filter((x) => !x.dir && x.name).map((x) => x.name));
     taRef.current?.focus();
   };
   const onPaste = (e: ClipboardEvent) => {
@@ -188,13 +212,13 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
           placeholder={
             elsewhere
               ? "This session is running in another window…"
-              : section === "chat"
-              ? "Ask anything…"
-              : mode === "plan"
-                ? "Describe what you want to plan…"
-                : section === "code"
-                  ? "Describe a coding task…"
-                  : "Describe a task for the agent…"
+              : kind === "chat"
+                ? "Ask anything…"
+                : mode === "plan"
+                  ? "Describe what you want to plan…"
+                  : kind === "code"
+                    ? "Describe a coding task…"
+                    : "Describe a task for the agent…"
           }
           onChange={(e) => setText(e.target.value)}
           onPaste={onPaste}
@@ -221,7 +245,12 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
               e.target.value = "";
             }}
           />
-          {isAgentSection(section) && <ModePicker onDone={focus} />}
+          <FolderPicker folder={folder} onChange={setFolder} kbd={`${mod}O`} onDone={focus} />
+          {kind !== "chat" && (
+            <span className={cx("mode-slot", turned && "turned")}>
+              <ModePicker onDone={focus} />
+            </span>
+          )}
           <div className="spacer" />
           <ModelPicker onDone={focus} />
           {/* One button that changes role, so its color cross-fades instead of the button blinking out and in. */}
@@ -242,7 +271,7 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
         {dropping && (
           <div className="drop-hint" aria-hidden>
             <FileUp size={16} />
-            Drop files to attach
+            Drop files to attach, or a folder to work in
           </div>
         )}
       </div>
@@ -253,7 +282,7 @@ export function Composer({ variant = "docked", seed }: { variant?: "home" | "doc
             <Keys combo="⇧↵" /> new line
           </span>
           <span className="hint">
-            {section === "chat" ? "AI can make mistakes. Double-check important info." : "Agents can make mistakes. Review changes."}
+            {kind === "chat" ? "AI can make mistakes. Double-check important info." : "Agents can make mistakes. Review changes."}
           </span>
         </div>
       )}

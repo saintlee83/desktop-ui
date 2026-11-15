@@ -3,10 +3,7 @@ import { useStore } from "../lib/store";
 import { mod } from "../lib/util";
 import { Segmented, tip } from "./ui";
 
-/**
- * Chat / Work / Code toggle. It sits at the top of the sidebar; while the sidebar
- * is hidden, the new-session screen shows it beneath the composer instead.
- */
+/** Chat / Code toggle, in the title bar beside the new-session button. */
 export function SectionSwitch() {
   const section = useStore((s) => s.section);
   const setSection = useStore((s) => s.setSection);
@@ -24,7 +21,6 @@ export function SectionSwitch() {
       label="Section"
       value={section}
       onChange={setSection}
-      iconSize={14}
       options={SECTIONS.map((s) => ({
         id: s.id,
         label: s.label,

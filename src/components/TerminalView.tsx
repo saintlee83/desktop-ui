@@ -6,42 +6,44 @@ import * as pty from "../lib/pty";
 import { SECTIONS } from "../lib/sections";
 import { isMac } from "../lib/util";
 
+// ANSI colors, muted to sit with the app's palette (see the tokens in styles.css).
 const LIGHT: ITheme = {
-  black: "#1c1b19", red: "#c9302c", green: "#1d7f3d", yellow: "#a5660b",
-  blue: "#2f5fc4", magenta: "#8839c7", cyan: "#0f7b8a", white: "#8f8b84",
-  brightBlack: "#5d5a55", brightRed: "#e0443f", brightGreen: "#25a04d", brightYellow: "#c27c10",
-  brightBlue: "#4175e0", brightMagenta: "#a052e0", brightCyan: "#1396a8", brightWhite: "#b5b1aa",
-  selectionBackground: "rgba(102, 86, 240, 0.22)",
-  scrollbarSliderBackground: "rgba(20, 18, 14, 0.14)",
-  scrollbarSliderHoverBackground: "rgba(20, 18, 14, 0.24)",
-  scrollbarSliderActiveBackground: "rgba(20, 18, 14, 0.32)",
+  black: "#1c1b18", red: "#b83a30", green: "#2b7a4b", yellow: "#94661a",
+  blue: "#2f5f9e", magenta: "#7b4f96", cyan: "#1f7480", white: "#8c8881",
+  brightBlack: "#5b5852", brightRed: "#d04a40", brightGreen: "#36935b", brightYellow: "#b27d22",
+  brightBlue: "#3f74bd", brightMagenta: "#9462b3", brightCyan: "#2a8c9a", brightWhite: "#b5b1aa",
 };
 const DARK: ITheme = {
-  black: "#3a3a38", red: "#f0716b", green: "#4cc274", yellow: "#e9ae4a",
-  blue: "#82aaff", magenta: "#c792ea", cyan: "#5fd1d6", white: "#d6d4cf",
-  brightBlack: "#75726c", brightRed: "#ff8f89", brightGreen: "#6fdc93", brightYellow: "#f5c66e",
-  brightBlue: "#a3c1ff", brightMagenta: "#dcb0f5", brightCyan: "#86e3e7", brightWhite: "#ffffff",
-  selectionBackground: "rgba(139, 125, 255, 0.35)",
-  scrollbarSliderBackground: "rgba(255, 255, 255, 0.12)",
-  scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.2)",
-  scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.28)",
+  black: "#3a3a37", red: "#ec837b", green: "#7fc79b", yellow: "#dbb56c",
+  blue: "#8fb2e0", magenta: "#c3a1dc", cyan: "#7cc8cf", white: "#d6d3cc",
+  brightBlack: "#73706a", brightRed: "#ff9c95", brightGreen: "#98dcb2", brightYellow: "#edc988",
+  brightBlue: "#abc8ee", brightMagenta: "#d8bdea", brightCyan: "#9bdde3", brightWhite: "#ffffff",
 };
+/** Opacity of the ink tint behind a selection and on the scrollbar (resting, hover, dragged). */
+const TINTS = { light: [0.14, 0.14, 0.24, 0.32], dark: [0.2, 0.12, 0.2, 0.28] };
 
 function themeFromCss(): ITheme {
   const cs = getComputedStyle(document.documentElement);
   const v = (name: string) => cs.getPropertyValue(name).trim();
   const dark = document.documentElement.dataset.theme === "dark";
+  // The color scheme's ink ("R G B"), spelled the way xterm parses colors.
+  const ink = v("--ink").split(/\s+/).join(", ");
+  const [selection, slider, sliderHover, sliderActive] = TINTS[dark ? "dark" : "light"].map((a) => `rgba(${ink}, ${a})`);
   return {
     ...(dark ? DARK : LIGHT),
     background: v("--term-bg"),
     foreground: v("--text"),
     cursor: v("--accent"),
     cursorAccent: v("--term-bg"),
+    selectionBackground: selection,
+    scrollbarSliderBackground: slider,
+    scrollbarSliderHoverBackground: sliderHover,
+    scrollbarSliderActiveBackground: sliderActive,
   };
 }
 
 /** Keys that, with ⌘ on macOS, are app shortcuts (see App's shortcut handler). */
-const APP_KEYS = ["k", "n", "b", "j", ",", "=", "+", "-", "0", "f", "l", "/", "m", "t", "c", "[", "]", "{", "}", "backspace", ...SECTIONS.map((s) => s.key)];
+const APP_KEYS = ["k", "n", "b", "j", "o", ",", "=", "+", "-", "0", "f", "l", "/", "m", "t", "c", "[", "]", "{", "}", "backspace", ...SECTIONS.map((s) => s.key)];
 /** Elsewhere Ctrl+letter belongs to the shell, so only these Ctrl+Shift combinations are the app's. */
 const APP_SHIFT_KEYS = ["n", "l", "m", "t", "[", "]", "{", "}", "backspace"];
 
@@ -60,12 +62,15 @@ export function isAppShortcut(e: KeyboardEvent) {
 export function TerminalView({
   active,
   command,
+  cwd,
   fontSize = 12.5,
   onSpawn,
   onExit,
 }: {
   /** Visible and meant to have keyboard focus. */
   active: boolean;
+  /** Folder the shell starts in; the home directory when there is none or it is gone. */
+  cwd?: string | null;
   /** Typed into the shell once it is ready, e.g. the CLI agent to start. */
   command?: string;
   fontSize?: number;
@@ -128,13 +133,17 @@ export function TerminalView({
     };
 
     pty
-      .spawn({ cols: term.cols, rows: term.rows }, (ev) => {
-        if (disposed) return;
-        if (ev.type === "data") {
-          term.write(ev.data);
-          waitForQuiet(350);
-        } else handlers.current.onExit(); // the shell exited (e.g. `exit`)
-      })
+      .spawn(
+        { cols: term.cols, rows: term.rows },
+        (ev) => {
+          if (disposed) return;
+          if (ev.type === "data") {
+            term.write(ev.data);
+            waitForQuiet(350);
+          } else handlers.current.onExit(); // the shell exited (e.g. `exit`)
+        },
+        cwd ?? undefined,
+      )
       .then((s) => {
         if (disposed) {
           void pty.kill(s.id);
@@ -157,7 +166,7 @@ export function TerminalView({
     const ro = new ResizeObserver(safeFit);
     ro.observe(el);
     const mo = new MutationObserver(() => (term.options.theme = themeFromCss()));
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-scheme"] });
 
     return () => {
       disposed = true;
@@ -170,7 +179,7 @@ export function TerminalView({
       term.dispose();
       termRef.current = null;
     };
-    // The command and font size are fixed for the life of a terminal; remount to change them.
+    // The command, folder and font size are fixed for the life of a terminal; remount to change them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -26,7 +26,7 @@ export async function spawn(size: { cols: number; rows: number }, onEvent: (e: P
     channel.onmessage = relay;
     spawned = await invoke<Spawned>("pty_spawn", { ...size, cwd: cwd ?? null, onEvent: channel });
   } else {
-    spawned = await mockSpawn(relay);
+    spawned = await mockSpawn(relay, cwd);
   }
   id = spawned.id;
   live.add(id);
@@ -57,13 +57,14 @@ export function killAll(): Promise<unknown> {
 
 // ---------------- browser mock ----------------
 
-const mocks = new Map<string, { emit: (e: PtyEvent) => void; line: string }>();
+const mocks = new Map<string, { emit: (e: PtyEvent) => void; line: string; prompt: string }>();
 const AGENT_CLIS = ["claude", "codex", "gemini", "amp"];
-const PROMPT = "\x1b[38;5;141m~\x1b[0m \x1b[2m$\x1b[0m ";
 
-async function mockSpawn(emit: (e: PtyEvent) => void): Promise<Spawned> {
+async function mockSpawn(emit: (e: PtyEvent) => void, cwd?: string): Promise<Spawned> {
   const id = `mock_${Math.random().toString(36).slice(2, 9)}`;
-  mocks.set(id, { emit, line: "" });
+  // Like a real prompt, it names the folder the shell is in.
+  const PROMPT = `\x1b[1m${cwd ? cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "~"}\x1b[0m \x1b[2m$\x1b[0m `;
+  mocks.set(id, { emit, line: "", prompt: PROMPT });
   setTimeout(() => {
     emit({
       type: "data",
@@ -73,12 +74,13 @@ async function mockSpawn(emit: (e: PtyEvent) => void): Promise<Spawned> {
         PROMPT,
     });
   }, 30);
-  return { id, shell: "mock", cwd: "~" };
+  return { id, shell: "mock", cwd: cwd ?? "~" };
 }
 
 async function mockWrite(id: string, data: string) {
   const s = mocks.get(id);
   if (!s) return;
+  const PROMPT = s.prompt;
   for (const ch of data) {
     if (ch === "\r") {
       const cmd = s.line.trim();

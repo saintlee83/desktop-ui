@@ -2,13 +2,19 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import * as agent from "./agent";
 import * as pty from "./pty";
+import type { SchemeId } from "./theme";
 import { withViewTransition } from "./util";
 import { isPrimaryWindow } from "./windows";
-import { isAgentSection } from "./types";
-import type { AgentEvent, AgentSection, Message, Mode, ModelInfo, Part, Section, Session, ToolPart } from "./types";
+import type { AgentEvent, Message, Mode, ModelInfo, Part, Project, Section, Session, ToolPart } from "./types";
 
-/** Modes available in the agent sections, Work and Code (Chat always runs in "chat" mode). */
+/** Modes the agent works in once it has tools (a plain chat always runs in "chat" mode). */
 export type WorkMode = Exclude<Mode, "chat">;
+/**
+ * What a session is, which decides what it can do. A chat is a plain conversation;
+ * give it a folder and it becomes work: the agent gets tools, modes, the terminal
+ * and the side panel. Sessions in the Code section are always agentic.
+ */
+export type Kind = "chat" | "work" | "code";
 
 export type Theme = "system" | "light" | "dark";
 export type PermissionMode = "ask" | "acceptEdits" | "bypass";
@@ -19,6 +25,8 @@ export type CodeView = "gui" | "terminal";
 export interface TerminalTab {
   id: string;
   shell?: string;
+  /** The folder it was opened in (the session's, at the time). */
+  cwd?: string | null;
 }
 
 export type SettingsTab = "account" | "general" | "providers" | "permissions" | "shortcuts";
@@ -37,7 +45,12 @@ interface Settings {
   apiKeys: Record<string, string>;
   /** UI zoom factor (1 = 100%). May be missing in settings saved before zoom existed. */
   zoom?: number;
+  /** Which set of neutrals the theme is drawn from (see lib/theme.ts). Missing means the default. */
+  scheme?: SchemeId;
 }
+
+/** What the project dialog collects. */
+export type ProjectInput = Pick<Project, "name" | "folder" | "instructions">;
 
 export const ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
@@ -49,10 +62,24 @@ interface State {
   sessions: Session[];
   activeId: string | null;
   section: Section;
-  /** The agent section used most recently: where the terminal and modes take you from Chat. */
-  agentSection: AgentSection;
   /** Last open session per section, restored when switching back. */
   lastActive: Partial<Record<Section, string | null>>;
+  projects: Project[];
+  /** The project this window is looking at: the sidebar lists its sessions and new ones are filed in it. */
+  projectId: string | null;
+  /**
+   * Folder picked on the new-session screen, for the session about to start.
+   * `undefined` means not chosen: the project's folder (or, in Code, the last one used) applies.
+   */
+  draftFolder: string | null | undefined;
+  /** Folders used lately, newest first, offered again by the folder picker. */
+  recentFolders: string[];
+  /** The folder Code used last: where its next session and its terminal view start. */
+  codeFolder: string | null;
+  /** The project dialog: "new", the id of the project being edited, or closed. */
+  projectDialog: string | null;
+  /** A session to file under the project the dialog creates. */
+  projectAdopt: string | null;
   codeView: CodeView;
   /** Which CLI the terminal view runs (an id from `CLIS`). */
   cli: string;
@@ -80,8 +107,24 @@ interface State {
   newSession(): void;
   selectSession(id: string): void;
   setSection(section: Section): void;
-  /** From Chat, moves to the last-used agent section; a no-op when already in one. */
-  enterAgentSection(): void;
+  /** From a plain chat, which has no tools, moves to Code; a no-op where the agent already has them. */
+  enterAgent(): void;
+  /** Gives the open session (or the one about to start) a folder to work in, or takes it away. */
+  setFolder(folder: string | null): void;
+  rememberFolder(folder: string): void;
+  setCodeFolder(folder: string | null): void;
+  /** Narrows the window to one project, or back to everything with `null`. */
+  setProject(id: string | null): void;
+  openProjectDialog(target?: string, adoptSession?: string): void;
+  closeProjectDialog(): void;
+  /** Creates a project and opens it, or files `adoptSession` under it instead. */
+  createProject(input: ProjectInput, adoptSession?: string | null): string;
+  updateProject(id: string, patch: Partial<ProjectInput>): void;
+  /** Removes a project. Its sessions are kept, unfiled. */
+  deleteProject(id: string): void;
+  /** Puts a deleted project back, with the sessions it had (undo). */
+  restoreProject(project: Project, sessionIds: string[]): void;
+  moveSession(id: string, projectId: string | null): void;
   /** Switches Code between the chat UI and the terminal; "terminal" also brings you to Code. */
   setCodeView(view: CodeView): void;
   setCli(id: string): void;
@@ -121,6 +164,37 @@ interface State {
 
 /** Code's terminal view is on screen: the main area is a CLI instead of the chat. */
 export const cliActive = (s: Pick<State, "section" | "codeView">) => s.section === "code" && s.codeView === "terminal";
+
+type Where = Pick<State, "sessions" | "activeId" | "section" | "projects" | "projectId" | "draftFolder" | "codeFolder">;
+
+export const sessionKind = (session: Pick<Session, "section" | "folder">): Kind =>
+  session.section === "code" ? "code" : session.folder ? "work" : "chat";
+
+/** The folder a session started from the new-session screen would work in. */
+export function homeFolder(s: Where): string | null {
+  if (s.draftFolder !== undefined) return s.draftFolder;
+  const project = s.projects.find((p) => p.id === s.projectId);
+  return project?.folder ?? (s.section === "code" ? s.codeFolder : null);
+}
+
+/** The folder in play: the open session's, or the one the next session will get. */
+export function currentFolder(s: Where): string | null {
+  const session = s.sessions.find((x) => x.id === s.activeId);
+  return session ? (session.folder ?? null) : homeFolder(s);
+}
+
+/** What is on screen: a plain chat, a chat working in a folder, or a coding session. */
+export const kindOf = (s: Where): Kind => (s.section === "code" ? "code" : currentFolder(s) ? "work" : "chat");
+
+/** The agent has tools here, so modes, the terminal and the side panel apply. */
+export const isAgentic = (s: Where) => kindOf(s) !== "chat";
+
+/** Whether a session shows in the sidebar of a window looking at `section` and `projectId`. */
+export const inScope = (session: Session, s: Pick<State, "section" | "projectId">) =>
+  session.section === s.section && (!s.projectId || session.projectId === s.projectId);
+
+const RECENT_FOLDERS = 6;
+const withRecent = (list: string[], folder: string) => [folder, ...list.filter((f) => f !== folder)].slice(0, RECENT_FOLDERS);
 
 /** A run is writing to this session, in this window or another one. */
 export const isStreaming = (session: Session | null | undefined) => session?.messages.at(-1)?.status === "streaming";
@@ -215,6 +289,8 @@ function settle(session: Session): Session {
 }
 
 const STORAGE_KEY = "agent-desktop";
+/** The workspace name earlier versions showed for every agent session, before sessions had folders. */
+const LEGACY_WORKSPACE = "desktop-ui";
 /** True while another window's save is being applied here, which must not be written back. */
 let adopting = false;
 
@@ -249,12 +325,12 @@ export const useStore = create<State>()(
       const enter = (st: State, section: Section): Partial<State> => {
         if (st.section === section) return {};
         const remembered = st.lastActive[section];
-        const exists = st.sessions.some((s) => s.id === remembered && s.section === section);
+        const exists = st.sessions.some((s) => s.id === remembered && inScope(s, { section, projectId: st.projectId }));
         return {
           section,
-          agentSection: isAgentSection(section) ? section : st.agentSection,
           lastActive: { ...st.lastActive, [st.section]: st.activeId },
           activeId: exists ? remembered! : null,
+          draftFolder: undefined,
         };
       };
 
@@ -269,7 +345,8 @@ export const useStore = create<State>()(
         const { model } = get();
         const session = get().sessions.find((s) => s.id === sid);
         if (!session) return;
-        const mode: Mode = session.section === "chat" ? "chat" : get().mode;
+        const mode: Mode = sessionKind(session) === "chat" ? "chat" : get().mode;
+        const project = get().projects.find((p) => p.id === session.projectId);
         const history = session.messages
           .filter((m) => m.status !== "error")
           .map((m) => ({ role: m.role, content: messageText(m) }));
@@ -296,7 +373,8 @@ export const useStore = create<State>()(
         };
 
         try {
-          const runId = await agent.startRun({ sessionId: sid, prompt, model, mode, history }, (ev) => {
+          const request = { sessionId: sid, prompt, model, mode, history, folder: session.folder ?? null, instructions: project?.instructions || null };
+          const runId = await agent.startRun(request, (ev) => {
             patchMessage(sid, assistant.id, (m) => applyEvent(m, ev));
             if (ev.type === "permissionRequest") {
               const msg = get().sessions.find((s) => s.id === sid)?.messages.find((m) => m.id === assistant.id);
@@ -315,9 +393,15 @@ export const useStore = create<State>()(
       return {
         sessions: [],
         activeId: null,
-        section: "work",
-        agentSection: "work",
+        section: "chat",
         lastActive: {},
+        projects: [],
+        projectId: null,
+        draftFolder: undefined,
+        recentFolders: [],
+        codeFolder: null,
+        projectDialog: null,
+        projectAdopt: null,
         codeView: "gui",
         cli: "claude",
         models: [],
@@ -350,7 +434,7 @@ export const useStore = create<State>()(
         newSession() {
           const now = get();
           if (now.activeId === null && !cliActive(now)) return;
-          go((st) => ({ activeId: null, ...(st.section === "code" ? { codeView: "gui" } : {}) }));
+          go((st) => ({ activeId: null, draftFolder: undefined, ...(st.section === "code" ? { codeView: "gui" } : {}) }));
         },
 
         selectSession(id) {
@@ -358,12 +442,13 @@ export const useStore = create<State>()(
           const session = now.sessions.find((s) => s.id === id);
           if (!session || (id === now.activeId && !cliActive(now))) return;
           const { section } = session;
-          go(() => ({
+          go((st) => ({
             activeId: id,
             section,
-            ...(isAgentSection(section) ? { agentSection: section } : {}),
             // Opening a session always shows it, even if Code was in its terminal view.
             ...(section === "code" ? { codeView: "gui" } : {}),
+            // Reached from outside the project being looked at (the palette), it brings the sidebar along.
+            ...(st.projectId && session.projectId !== st.projectId ? { projectId: session.projectId ?? null } : {}),
           }));
         },
 
@@ -371,8 +456,91 @@ export const useStore = create<State>()(
           if (get().section !== section) go((st) => enter(st, section));
         },
 
-        enterAgentSection() {
-          if (!isAgentSection(get().section)) get().setSection(get().agentSection);
+        enterAgent() {
+          if (!isAgentic(get())) get().setSection("code");
+        },
+
+        setFolder(folder) {
+          set((st) => {
+            const open = st.sessions.some((s) => s.id === st.activeId);
+            return {
+              ...(open
+                ? { sessions: st.sessions.map((s) => (s.id === st.activeId ? { ...s, folder } : s)) }
+                : { draftFolder: folder }),
+              ...(st.section === "code" ? { codeFolder: folder } : {}),
+              ...(folder ? { recentFolders: withRecent(st.recentFolders, folder) } : {}),
+            };
+          });
+        },
+        rememberFolder: (folder) => set((st) => ({ recentFolders: withRecent(st.recentFolders, folder) })),
+        setCodeFolder: (codeFolder) =>
+          set((st) => ({ codeFolder, ...(codeFolder ? { recentFolders: withRecent(st.recentFolders, codeFolder) } : {}) })),
+
+        setProject(projectId) {
+          if (get().projectId === projectId) return;
+          go((st) => {
+            // An open session stays open only if it belongs to what is now being looked at.
+            const open = st.sessions.find((s) => s.id === st.activeId);
+            const keep = !!open && (!projectId || open.projectId === projectId);
+            return { projectId, draftFolder: undefined, activeId: keep ? st.activeId : null };
+          });
+        },
+        openProjectDialog: (target = "new", adoptSession) => set({ projectDialog: target, projectAdopt: adoptSession ?? null }),
+        closeProjectDialog: () => set({ projectDialog: null, projectAdopt: null }),
+
+        createProject(input, adoptSession) {
+          const project: Project = {
+            id: uid(),
+            name: input.name.trim() || "Untitled project",
+            folder: input.folder,
+            instructions: input.instructions.trim(),
+            createdAt: Date.now(),
+          };
+          set((st) => ({ projects: [...st.projects, project] }));
+          if (adoptSession) get().moveSession(adoptSession, project.id);
+          else get().setProject(project.id);
+          return project.id;
+        },
+
+        updateProject(id, patch) {
+          set((st) => ({
+            projects: st.projects.map((p) =>
+              p.id !== id
+                ? p
+                : {
+                    ...p,
+                    ...patch,
+                    name: patch.name === undefined ? p.name : patch.name.trim() || p.name,
+                    instructions: patch.instructions === undefined ? p.instructions : patch.instructions.trim(),
+                  },
+            ),
+          }));
+        },
+
+        deleteProject(id) {
+          set((st) => ({
+            projects: st.projects.filter((p) => p.id !== id),
+            sessions: st.sessions.map((s) => (s.projectId === id ? { ...s, projectId: null } : s)),
+            projectId: st.projectId === id ? null : st.projectId,
+            draftFolder: st.projectId === id ? undefined : st.draftFolder,
+          }));
+        },
+
+        restoreProject(project, sessionIds) {
+          if (get().projects.some((p) => p.id === project.id)) return;
+          set((st) => ({
+            projects: [...st.projects, project].sort((a, b) => a.createdAt - b.createdAt),
+            // Only sessions still unfiled go back: one moved elsewhere since stays where it was put.
+            sessions: st.sessions.map((s) => (sessionIds.includes(s.id) && !s.projectId ? { ...s, projectId: project.id } : s)),
+          }));
+        },
+
+        moveSession(id, projectId) {
+          set((st) => ({
+            sessions: st.sessions.map((s) => (s.id === id ? { ...s, projectId } : s)),
+            // The open session takes the sidebar with it instead of vanishing from the list.
+            ...(st.activeId === id && st.projectId && st.projectId !== projectId ? { projectId } : {}),
+          }));
         },
 
         setCodeView(codeView) {
@@ -418,9 +586,11 @@ export const useStore = create<State>()(
               createdAt: now,
               updatedAt: now,
               messages: [user],
+              folder: homeFolder(get()),
+              projectId: get().projectId,
             };
             sid = session.id;
-            set((st) => ({ sessions: [session, ...st.sessions], activeId: session.id }));
+            set((st) => ({ sessions: [session, ...st.sessions], activeId: session.id, draftFolder: undefined }));
           } else {
             patchSession(sid, (s) => ({ ...s, updatedAt: Date.now(), messages: [...s.messages, user] }));
           }
@@ -496,15 +666,15 @@ export const useStore = create<State>()(
         toggleTerminal(open) {
           // Code's terminal view is already a terminal; the drawer stays out of its way.
           if (cliActive(get())) return;
-          const next = open ?? !(get().terminalOpen && isAgentSection(get().section));
-          // The terminal belongs to the agent sections; opening it from Chat switches to one.
-          if (next) get().enterAgentSection();
+          const next = open ?? !(get().terminalOpen && isAgentic(get()));
+          // The terminal comes with the agent; opening it from a plain chat moves to Code.
+          if (next) get().enterAgent();
           set({ terminalOpen: next });
           if (next && get().terminals.length === 0) get().newTerminal();
         },
         newTerminal() {
           if (cliActive(get())) return;
-          const tab: TerminalTab = { id: uid() };
+          const tab: TerminalTab = { id: uid(), cwd: currentFolder(get()) };
           set((st) => ({ terminals: [...st.terminals, tab], activeTerminal: tab.id, terminalOpen: true }));
         },
         closeTerminal(id) {
@@ -536,7 +706,7 @@ export const useStore = create<State>()(
     },
     {
       name: STORAGE_KEY,
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => ({
         getItem: (key) => localStorage.getItem(key),
         // Taking over another window's changes must not echo them back (see `adopt`).
@@ -545,12 +715,22 @@ export const useStore = create<State>()(
         },
         removeItem: (key) => localStorage.removeItem(key),
       })),
-      // v1 had no sections: existing sessions become Work sessions.
       migrate: (persisted, version) => {
         const p = persisted as Omit<Partial<State>, "mode"> & { mode?: Mode };
-        if (version < 2) {
-          p.sessions = (p.sessions ?? []).map((s) => ({ ...s, section: s.section ?? "work" }));
-          if (p.mode === "chat") p.mode = "agent";
+        // v1 had no sections: every session was agent work.
+        const sectionOf = (s: Session) => ((s as { section?: string }).section ?? "work");
+        if (version < 2 && p.mode === "chat") p.mode = "agent";
+        if (version < 3) {
+          // v2 had a third section, Work. It is now a chat with a folder, so Work sessions move to
+          // Chat and keep their tools by getting the workspace every agent session was shown with.
+          p.sessions = (p.sessions ?? []).map((s) => {
+            const was = sectionOf(s);
+            return was === "chat" ? s : { ...s, section: was === "code" ? "code" : "chat", folder: s.folder ?? LEGACY_WORKSPACE };
+          });
+          const last = (p.lastActive ?? {}) as Record<string, string | null | undefined>;
+          p.lastActive = { chat: last.chat ?? last.work ?? null, code: last.code ?? null };
+          if ((p.section as string | undefined) !== "code") p.section = "chat";
+          delete (p as { agentSection?: unknown }).agentSection;
         }
         return p as State;
       },
@@ -558,8 +738,11 @@ export const useStore = create<State>()(
         sessions: s.sessions,
         activeId: s.activeId,
         section: s.section,
-        agentSection: s.agentSection,
         lastActive: s.lastActive,
+        projects: s.projects,
+        projectId: s.projectId,
+        recentFolders: s.recentFolders,
+        codeFolder: s.codeFolder,
         codeView: s.codeView,
         cli: s.cli,
         model: s.model,
@@ -630,6 +813,8 @@ function reuse(next: Session, prev: Session | undefined): Session {
   if (
     prev.updatedAt === next.updatedAt &&
     prev.title === next.title &&
+    (prev.folder ?? null) === (next.folder ?? null) &&
+    (prev.projectId ?? null) === (next.projectId ?? null) &&
     prev.messages.length === next.messages.length &&
     last(prev)?.status === last(next)?.status
   ) {
@@ -646,7 +831,7 @@ function reuse(next: Session, prev: Session | undefined): Session {
 
 /** Takes over what another window just saved, except the sessions this window is itself running. */
 function adopt(raw: string) {
-  let saved: Partial<Pick<State, "sessions" | "settings" | "account">> | undefined;
+  let saved: Partial<Pick<State, "sessions" | "settings" | "account" | "projects" | "recentFolders">> | undefined;
   try {
     saved = (JSON.parse(raw) as { state?: typeof saved }).state;
   } catch {
@@ -664,12 +849,16 @@ function adopt(raw: string) {
         ...running.filter((s) => !theirs.some((x) => x.id === s.id)),
         ...theirs.map((s) => (st.runs[s.id] ? mine.get(s.id)! : reuse(s, mine.get(s.id)))),
       ];
+      const projects = Array.isArray(saved.projects) ? saved.projects : st.projects;
       return {
         sessions,
+        projects,
+        recentFolders: saved.recentFolders ?? st.recentFolders,
         settings: saved.settings ?? st.settings,
         account: saved.account === undefined ? st.account : saved.account,
-        // The open session may have been deleted in the other window.
+        // The open session or project may have been deleted in the other window.
         activeId: sessions.some((s) => s.id === st.activeId) ? st.activeId : null,
+        projectId: projects.some((p) => p.id === st.projectId) ? st.projectId : null,
       };
     });
   } finally {

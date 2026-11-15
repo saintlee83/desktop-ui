@@ -97,8 +97,9 @@ pub fn pty_spawn(
 
     // The user's default shell, launched as a login shell so PATH etc. match their terminal.
     let mut cmd = CommandBuilder::new_default_prog();
+    // A folder that has since been moved or deleted falls back to the home directory.
     let cwd = cwd
-        .filter(|c| !c.is_empty())
+        .filter(|c| std::path::Path::new(c).is_dir())
         .or_else(home_dir)
         .unwrap_or_else(|| ".".into());
     cmd.cwd(&cwd);

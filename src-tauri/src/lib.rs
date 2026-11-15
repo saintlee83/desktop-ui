@@ -1,4 +1,5 @@
 mod agent;
+mod folders;
 mod mock;
 mod protocol;
 mod pty;
@@ -39,10 +40,13 @@ async fn new_window(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resu
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // The native folder chooser behind "Choose folder…".
+        .plugin(tauri_plugin_dialog::init())
         .manage(agent::AgentState::default())
         .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             new_window,
+            folders::folder_info,
             agent::list_models,
             agent::run_agent,
             agent::cancel_agent,

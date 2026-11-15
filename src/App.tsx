@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as actions from "./lib/actions";
-import { PANEL_W, SIDEBAR_W, cliActive, useStore } from "./lib/store";
+import { PANEL_W, SIDEBAR_W, cliActive, isAgentic, useStore } from "./lib/store";
 import { inTauri } from "./lib/agent";
 import { SECTIONS } from "./lib/sections";
-import { isAgentSection, type ToolPart } from "./lib/types";
-import { cssZoom, cx, isMac, withViewTransition } from "./lib/util";
+import { useApplyTheme } from "./lib/theme";
+import type { ToolPart } from "./lib/types";
+import { cssZoom, cx, isMac } from "./lib/util";
 import { onWindowClose } from "./lib/windows";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
@@ -14,32 +15,12 @@ import { Composer } from "./components/Composer";
 import { RightPanel } from "./components/RightPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { ProjectDialog } from "./components/ProjectDialog";
 import { TerminalDrawer } from "./components/TerminalDrawer";
 import { CliView } from "./components/CliView";
 import { Tooltips } from "./components/Tooltip";
 import { Toaster } from "./components/Toaster";
 import { ColResizer } from "./components/ui";
-
-function useTheme() {
-  const theme = useStore((s) => s.settings.theme);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const root = document.documentElement;
-    const apply = () => {
-      const next = theme === "dark" || (theme === "system" && mq.matches) ? "dark" : "light";
-      if (root.dataset.theme === next) return;
-      const set = () => {
-        root.dataset.theme = next;
-      };
-      // First paint applies instantly; later switches cross-fade.
-      if (root.dataset.theme) withViewTransition(set, "fade");
-      else set();
-    };
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, [theme]);
-}
 
 /** Applies the zoom setting: native webview zoom in Tauri, CSS zoom in a plain browser. */
 function useZoom() {
@@ -104,7 +85,7 @@ function useShortcuts() {
       if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "`" || e.key === "~" || e.code === "Backquote")) {
         e.preventDefault();
         if (e.shiftKey) {
-          s.enterAgentSection();
+          s.enterAgent();
           s.newTerminal();
         } else s.toggleTerminal();
         return;
@@ -113,7 +94,9 @@ function useShortcuts() {
       // Off macOS that leaves the app only the Ctrl+Shift combinations there.
       if (inTerminal && (e.key === "Escape" || (!isMac && !e.shiftKey))) return;
 
-      if (e.key === "Escape" && s.activeId && s.runs[s.activeId] && !s.paletteOpen && !s.settingsOpen) {
+      // A dialog over the window takes the keys that would otherwise act on the session behind it.
+      const modal = s.paletteOpen || s.settingsOpen || !!s.projectDialog;
+      if (e.key === "Escape" && s.activeId && s.runs[s.activeId] && !modal) {
         // Esc first closes whatever is open (a menu, a rename, a search) before it stops the agent.
         const busy = document.querySelector("[data-esc-layer]") || target?.matches?.(".rename-input, .sidebar-search input");
         if (!busy) s.stop();
@@ -123,7 +106,7 @@ function useShortcuts() {
       const k = e.key.toLowerCase();
 
       // Permission prompt: ⌘↵ allows, ⌘⌫ denies (unless that would eat text being edited).
-      if ((e.key === "Enter" || e.key === "Backspace") && !e.shiftKey && !e.altKey && !inTerminal && !s.paletteOpen && !s.settingsOpen) {
+      if ((e.key === "Enter" || e.key === "Backspace") && !e.shiftKey && !e.altKey && !inTerminal && !modal) {
         const tool = pendingPermission();
         const editing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target.value !== "" : false;
         if (tool && !(e.key === "Backspace" && editing)) {
@@ -154,7 +137,6 @@ function useShortcuts() {
       if (e.altKey) return;
       // Brackets by position, so ⇧⌘[ works whatever character Shift turns the key into.
       const key = e.code === "BracketLeft" ? "[" : e.code === "BracketRight" ? "]" : k;
-      const modal = s.paletteOpen || s.settingsOpen;
 
       // These work everywhere, also over the palette and settings.
       const global: Record<string, () => void> = e.shiftKey
@@ -175,9 +157,10 @@ function useShortcuts() {
             n: () => s.newSession(),
             b: () => s.toggleSidebar(),
             j: () => s.togglePanel(),
+            o: () => void actions.addFolder(),
             f: actions.focusSearch,
             l: actions.focusComposer,
-            // ⌘1 / ⌘2 / ⌘3 jump to a section.
+            // ⌘1 / ⌘2 jump to a section.
             ...Object.fromEntries(SECTIONS.map((sec) => [sec.key, () => s.setSection(sec.id)])),
           };
       // ⌘/ lists the shortcuts; on layouts where "/" needs Shift it still counts.
@@ -200,11 +183,11 @@ export default function App() {
   const panelWidth = useStore((s) => s.panelWidth);
   const { setSidebarWidth, setPanelWidth } = useStore.getState();
   const app = useRef<HTMLDivElement>(null);
-  // The side panel (changes / commands / context) belongs to the agent sections' chat UI.
-  const panelOpen = useStore((s) => s.panelOpen && isAgentSection(s.section) && !cliActive(s));
+  // The side panel (changes / commands / context) comes with the agent's tools: Code, or a chat with a folder.
+  const panelOpen = useStore((s) => s.panelOpen && isAgentic(s) && !cliActive(s));
   const hasSession = useStore((s) => s.sessions.some((x) => x.id === s.activeId));
   const cli = useStore(cliActive);
-  useTheme();
+  useApplyTheme();
   useZoom();
   useShortcuts();
 
@@ -271,6 +254,7 @@ export default function App() {
       </div>
       <CommandPalette />
       <SettingsDialog />
+      <ProjectDialog />
       <ZoomIndicator />
       <Toaster />
       <Tooltips />

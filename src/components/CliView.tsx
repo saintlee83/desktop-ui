@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { RotateCw, SquareTerminal } from "lucide-react";
 import { CLIS, cliInfo } from "../lib/clis";
-import { cliActive, useStore } from "../lib/store";
+import { cliActive, currentFolder, useStore } from "../lib/store";
+import { FolderPicker } from "./FolderPicker";
 import { ModePicker } from "./ModePicker";
 import { Picker, type PickerGroup } from "./Picker";
 import { TerminalView } from "./TerminalView";
@@ -21,7 +22,8 @@ const CLI_GROUPS: PickerGroup<string>[] = [...new Set(CLIS.map((c) => c.provider
  * Code's terminal mode: the whole main area becomes a terminal running a CLI
  * coding agent in the user's login shell, in place of the chat UI. Once started
  * it stays alive in the background, so switching back to the chat and returning
- * finds the same session.
+ * finds the same session. It starts in the folder Code is working in; choosing
+ * another one starts it again there.
  */
 export function CliView() {
   const active = useStore(cliActive);
@@ -31,7 +33,12 @@ export function CliView() {
   const [started, setStarted] = useState(active);
   const [run, setRun] = useState(0);
   const [exited, setExited] = useState(false);
-  if (active && !started) setStarted(true);
+  // Where the shell runs, fixed when it starts: the folder of whatever Code had open.
+  const [cwd, setCwd] = useState<string | null>(() => currentFolder(useStore.getState()));
+  if (active && !started) {
+    setStarted(true);
+    setCwd(currentFolder(useStore.getState()));
+  }
   if (!started) return null;
 
   const cli = cliInfo(cliId);
@@ -44,6 +51,17 @@ export function CliView() {
     <section className="cli" hidden={!active} aria-label="Terminal">
       <div className="cli-bar">
         <ModePicker />
+        <FolderPicker
+          folder={cwd}
+          empty="Home folder"
+          hint={cwd ? undefined : "Choose where the CLI runs"}
+          onChange={(folder) => {
+            if (folder === cwd) return;
+            useStore.getState().setCodeFolder(folder);
+            setCwd(folder);
+            restart();
+          }}
+        />
         <Picker
           label="CLI"
           align="left"
@@ -64,8 +82,8 @@ export function CliView() {
         </IconButton>
       </div>
       <div className="cli-body">
-        {/* Keyed: choosing another CLI or restarting ends this shell and starts a fresh one. */}
-        <TerminalView key={`${cli.id}:${run}`} active={active && !exited} command={cli.command} fontSize={13} onExit={() => setExited(true)} />
+        {/* Keyed: choosing another CLI or folder, or restarting, ends this shell and starts a fresh one. */}
+        <TerminalView key={`${cli.id}:${run}`} active={active && !exited} command={cli.command} cwd={cwd} fontSize={13} onExit={() => setExited(true)} />
         {exited && (
           <div className="cli-exited">
             <span className="panel-empty-icon">

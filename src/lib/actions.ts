@@ -1,16 +1,17 @@
 // Commands shared by keyboard shortcuts, the command palette and buttons.
 
-import { cliActive, messageText, useStore } from "./store";
+import { pickFolder } from "./folders";
+import { cliActive, inScope, isAgentic, messageText, useStore } from "./store";
 import { toast } from "./toast";
 import type { WorkMode } from "./store";
-import { isAgentSection, type Session } from "./types";
+import type { Project, Session } from "./types";
 import { copyText } from "./util";
 import * as windows from "./windows";
 
-/** The current section's sessions, newest first: the order the sidebar lists them in. */
+/** The sessions the sidebar lists (this section, this project), newest first. */
 function listed() {
   const s = useStore.getState();
-  return s.sessions.filter((x) => x.section === s.section).sort((a, b) => b.updatedAt - a.updatedAt);
+  return s.sessions.filter((x) => inScope(x, s)).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Deletes a session and offers to bring it back. */
@@ -75,20 +76,50 @@ export function toggleTheme() {
   useStore.getState().updateSettings({ theme: dark ? "light" : "dark" });
 }
 
-/** Agent ↔ Plan. From Chat this first moves to the agent section used last. */
+/** Asks for a folder and gives it to the open session, or to the one about to start. */
+export async function addFolder() {
+  if (cliActive(useStore.getState())) return;
+  const folder = await pickFolder().catch((e) => {
+    toast(`Couldn't open the folder chooser: ${e}`);
+    return null;
+  });
+  if (folder) useStore.getState().setFolder(folder);
+  focusComposer();
+}
+
+/** A plain chat has no modes: they come with a folder. */
+const needsFolder = () => toast("Add a folder to use Agent and Plan modes", { label: "Add folder", run: () => void addFolder() });
+
+/** Agent ↔ Plan. */
 export function toggleMode() {
   const s = useStore.getState();
   if (cliActive(s)) return;
-  if (!isAgentSection(s.section)) s.enterAgentSection();
+  if (!isAgentic(s)) needsFolder();
   else s.setMode(s.mode === "agent" ? "plan" : "agent");
 }
 
-/** Picks Agent or Plan, coming out of Code's terminal view or over from Chat if need be. */
+/** Picks Agent or Plan, coming out of Code's terminal view if need be. */
 export function chooseMode(mode: WorkMode) {
   const s = useStore.getState();
   if (cliActive(s)) s.setCodeView("gui");
-  s.enterAgentSection();
+  if (!isAgentic(useStore.getState())) return void needsFolder();
   s.setMode(mode);
+}
+
+/** Deletes a project (its sessions stay, unfiled) and offers to bring it back. */
+export function deleteProjectWithUndo(project: Project) {
+  const s = useStore.getState();
+  const wasOpen = s.projectId === project.id;
+  const filed = s.sessions.filter((x) => x.projectId === project.id).map((x) => x.id);
+  s.deleteProject(project.id);
+  toast(`Deleted project “${project.name}”`, {
+    label: "Undo",
+    run: () => {
+      const now = useStore.getState();
+      now.restoreProject(project, filed);
+      if (wasOpen) now.setProject(project.id);
+    },
+  });
 }
 
 /** Code's chat UI ↔ its full-window terminal. */

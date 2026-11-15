@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Check, Eye, EyeOff, FilePen, Hand, Keyboard, KeyRound, LogOut, Minus, Palette, Plus, ShieldCheck, User, X, Zap } from "lucide-react";
 import { SECTIONS } from "../lib/sections";
 import { useStore, ZOOM_STEPS, type PermissionMode, type SettingsTab, type Theme } from "../lib/store";
+import { SCHEMES, schemeInfo, useResolvedTheme, type SchemeId } from "../lib/theme";
 import { toast } from "../lib/toast";
 import { Avatar } from "./AccountMenu";
 import { inTauri } from "../lib/agent";
@@ -48,6 +49,7 @@ const SHORTCUTS: { title: string; items: [action: string, keys: string][] }[] = 
     title: "Sessions",
     items: [
       ["New session", `${mod}N`],
+      ["Add a folder", `${mod}O`],
       ...SECTIONS.map((s): [string, string] => [`Go to ${s.label}`, `${mod}${s.key}`]),
       ["Search sessions", `${mod}F`],
       ["Previous session", `${modShift}[`],
@@ -81,13 +83,16 @@ const SHORTCUTS: { title: string; items: [action: string, keys: string][] }[] = 
   },
 ];
 
-/** Miniature window on the theme cards. "System" shows the light and dark halves side by side. */
-function ThemePreview({ theme }: { theme: Theme }) {
+/**
+ * Miniature window on the theme and color scheme cards, drawn with the real tokens of the
+ * theme and scheme it stands for. "System" shows the light and dark halves side by side.
+ */
+function ThemePreview({ theme, scheme }: { theme: Theme; scheme: SchemeId }) {
   const scenes = theme === "system" ? (["light", "dark"] as const) : [theme];
   return (
     <span className={cx("theme-preview", theme)} aria-hidden>
       {scenes.map((scene) => (
-        <span key={scene} className={cx("tp-scene", scene)}>
+        <span key={scene} className={cx("tp-scene", scene)} data-theme={scene} data-scheme={scheme}>
           <span className="tp-window">
             <span className="tp-side" />
             <span className="tp-main">
@@ -218,6 +223,8 @@ export function SettingsDialog() {
   const settings = useStore((s) => s.settings);
   const { setSettingsOpen, updateSettings, zoomBy, resetZoom } = useStore.getState();
   const zoom = settings.zoom ?? 1;
+  const scheme = schemeInfo(settings.scheme).id;
+  const resolvedTheme = useResolvedTheme();
   const tab = useStore((s) => s.settingsTab);
   const setTab = (settingsTab: SettingsTab) => useStore.setState({ settingsTab });
   const { mounted, closing } = usePresence(open, 140);
@@ -283,9 +290,32 @@ export function SettingsDialog() {
                         className={cx("theme-card", settings.theme === t.id && "on")}
                         onClick={() => updateSettings({ theme: t.id })}
                       >
-                        <ThemePreview theme={t.id} />
+                        <ThemePreview theme={t.id} scheme={scheme} />
                         <span className="theme-card-label">
                           {t.label}
+                          <Check size={13} className="theme-card-check" />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="field">
+                  <span className="field-label">
+                    Color scheme
+                    <span className="field-aside">{schemeInfo(scheme).hint}</span>
+                  </span>
+                  <div className="theme-cards scheme-cards" role="radiogroup" aria-label="Color scheme">
+                    {SCHEMES.map((s) => (
+                      <button
+                        key={s.id}
+                        role="radio"
+                        aria-checked={scheme === s.id}
+                        className={cx("theme-card", scheme === s.id && "on")}
+                        onClick={() => updateSettings({ scheme: s.id })}
+                      >
+                        <ThemePreview theme={resolvedTheme} scheme={s.id} />
+                        <span className="theme-card-label">
+                          {s.name}
                           <Check size={13} className="theme-card-check" />
                         </span>
                       </button>
