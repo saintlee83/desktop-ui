@@ -108,6 +108,14 @@ pub struct RunRequest {
     pub mode: Mode,
     #[serde(default)]
     pub history: Vec<HistoryMessage>,
+    /// The folder the agent works in, when the session has one.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub folder: Option<String>,
+    /// Standing instructions of the session's project, meant for the system prompt.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,5 +176,14 @@ mod tests {
         .unwrap();
         assert_eq!(req.mode, Mode::Plan);
         assert_eq!(req.history.len(), 1);
+        assert_eq!((req.folder, req.instructions), (None, None));
+
+        let req: RunRequest = serde_json::from_value(json!({
+            "sessionId": "s", "prompt": "hi", "model": "m", "mode": "agent", "history": [],
+            "folder": "/work/site", "instructions": null
+        }))
+        .unwrap();
+        assert_eq!(req.folder.as_deref(), Some("/work/site"));
+        assert_eq!(req.instructions, None);
     }
 }

@@ -27,6 +27,10 @@ const uid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
 function script(req: RunRequest): Step[] {
   const model = MODELS.find((m) => m.id === req.model)?.name ?? req.model;
   const topic = req.prompt.trim().replace(/\s+/g, " ").slice(0, 80);
+  // Where the agent works, by name, and a nod to the project's instructions if it has any.
+  const name = req.folder?.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+  const place = name ? `\`${name}\`` : "the codebase";
+  const heed = req.instructions?.trim() ? ` The project's instructions apply: "${req.instructions.trim().replace(/\s+/g, " ").slice(0, 80)}".` : "";
   const grep: Step = {
     tool: {
       name: "Grep", kind: "search", input: `"normalizeTitle" in src/`, ms: 300,
@@ -41,22 +45,22 @@ function script(req: RunRequest): Step[] {
   };
   if (req.mode === "chat") {
     return [
-      { think: `The user asked: "${topic}". Conversational request — no tools needed.` },
-      { say: `Here's a response from **${model}** (browser mock).\n\nYou asked about: _${topic}_\n\n- Streaming text\n- Markdown & tables\n- Switch to **Work** for tool calls\n\n\`\`\`ts\nconst run = await startRun(request, onEvent);\n\`\`\`` },
+      { think: `The user asked: "${topic}". Conversational request — no tools needed.${heed}` },
+      { say: `Here's a response from **${model}** (browser mock).\n\nYou asked about: _${topic}_\n\n- Streaming text\n- Markdown & tables\n- Add a folder for tool calls\n\n\`\`\`ts\nconst run = await startRun(request, onEvent);\n\`\`\`` },
     ];
   }
   if (req.mode === "plan") {
     return [
-      { think: `Plan mode, read-only. Task: "${topic}".` },
-      { say: "Exploring read-only first.\n\n" },
+      { think: `Plan mode, read-only. Task: "${topic}".${heed}` },
+      { say: `Exploring ${place} read-only first.\n\n` },
       grep,
       read,
       { say: "### Plan\n\n1. Normalize whitespace in `normalizeTitle`\n2. Add an empty-title fallback\n3. Add tests and run them\n\n> Nothing changed. Switch to **Agent** mode to execute." },
     ];
   }
   return [
-    { think: `Task: "${topic}". I'll locate the title helper first.` },
-    { say: "I'll start by exploring the codebase.\n\n" },
+    { think: `Task: "${topic}". I'll locate the title helper first.${heed}` },
+    { say: `I'll start by exploring ${place}.\n\n` },
     grep,
     read,
     { think: "normalizeTitle slices the raw prompt without trimming. Fix: collapse whitespace, trim, truncate safely." },

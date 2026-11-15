@@ -1,14 +1,16 @@
 import { PanelLeft, PanelRight, Search, SquarePen, SquareTerminal } from "lucide-react";
 import { cliInfo } from "../lib/clis";
-import { cliActive, useActiveSession, useStore } from "../lib/store";
-import { isAgentSection } from "../lib/types";
+import { cliActive, isAgentic, useActiveSession, useStore } from "../lib/store";
 import { mod } from "../lib/util";
+import { SectionSwitch } from "./SectionSwitch";
 import { IconButton, Keys, tip } from "./ui";
 
 export function TitleBar() {
   const session = useActiveSession();
   const running = useStore((s) => (s.activeId ? !!s.runs[s.activeId] : false));
   const section = useStore((s) => s.section);
+  // The terminal and the side panel come with the agent's tools: Code, or a chat that has a folder.
+  const agentic = useStore(isAgentic);
   const panelOpen = useStore((s) => s.panelOpen);
   const terminalOpen = useStore((s) => s.terminalOpen);
   // In Code's terminal view the window is the CLI: it gives the title, and the chat's panels don't apply.
@@ -22,6 +24,7 @@ export function TitleBar() {
         <IconButton label="Toggle sidebar" kbd={`${mod}B`} onClick={toggleSidebar}>
           <PanelLeft size={16} />
         </IconButton>
+        <SectionSwitch />
         <IconButton label={`New ${noun}`} kbd={`${mod}N`} onClick={newSession}>
           <SquarePen size={16} />
         </IconButton>
@@ -38,7 +41,7 @@ export function TitleBar() {
           <span>Search</span>
           <Keys combo={`${mod}K`} />
         </button>
-        {isAgentSection(section) && !cli && (
+        {agentic && !cli && (
           <>
             <IconButton label="Toggle terminal" kbd="Ctrl+`" onClick={() => toggleTerminal()} active={terminalOpen}>
               <SquareTerminal size={16} />

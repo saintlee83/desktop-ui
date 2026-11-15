@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, type LucideIcon } from "lucide-react";
 import { cssZoom, cx, menuKeyDown, useClickOutside, usePresence } from "../lib/util";
 import { tip } from "./ui";
@@ -10,6 +10,8 @@ export interface PickerItem<T extends string> {
   /** Short trailing tag, e.g. a context window size. */
   meta?: string;
   icon?: LucideIcon;
+  /** A destructive action: it turns red under the pointer. */
+  danger?: boolean;
 }
 
 export interface PickerGroup<T extends string> {
@@ -20,6 +22,9 @@ export interface PickerGroup<T extends string> {
 /**
  * A pill showing the current choice that opens a menu of the others (model, mode, CLI).
  * The menu opens toward whichever side has more room and is fully keyboard-navigable.
+ *
+ * The menu may also hold actions rather than choices (the folder picker's "Choose folder…"):
+ * then `value` matches no item, and `children` says what the pill shows.
  */
 export function Picker<T extends string>({
   label,
@@ -32,6 +37,7 @@ export function Picker<T extends string>({
   kbd,
   className,
   onDone,
+  children,
 }: {
   /** Accessible name of the menu, and of the pill when the current choice is unknown. */
   label: string;
@@ -47,6 +53,8 @@ export function Picker<T extends string>({
   className?: string;
   /** Called after the menu closes by choosing or Esc, e.g. to hand focus back. */
   onDone?: () => void;
+  /** The pill's content, in place of the current item's icon and name. */
+  children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const { mounted, closing } = usePresence(open, 120);
@@ -57,10 +65,17 @@ export function Picker<T extends string>({
   const close = useCallback(() => setOpen(false), []);
   useClickOutside(ref, close, open);
   const current = groups.flatMap((g) => g.items).find((i) => i.id === value);
+  // While the menu fades out it keeps the items it had when open: a choice that changes them
+  // (removing the folder drops "Remove folder") would otherwise reshape it mid-fade.
+  const lastOpen = useRef(groups);
+  if (open) lastOpen.current = groups;
+  const shown = open ? groups : lastOpen.current;
 
-  // Keyboard users land on the current choice.
+  // Keyboard users land on the current choice, or on the first item when nothing is chosen.
   useEffect(() => {
-    if (open) menu.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
+    if (!open) return;
+    const at = menu.current?.querySelector<HTMLElement>('[aria-selected="true"]') ?? menu.current?.querySelector<HTMLElement>('[role="option"]');
+    at?.focus({ preventScroll: true });
   }, [open]);
 
   const toggle = () => {
@@ -80,6 +95,7 @@ export function Picker<T extends string>({
   return (
     <div className={cx("popover-anchor", className)} ref={ref}>
       <button
+        type="button"
         className={cx("pill", open && "open")}
         onClick={toggle}
         aria-haspopup="listbox"
@@ -87,8 +103,12 @@ export function Picker<T extends string>({
         aria-label={`${label}: ${current?.name ?? "none"}`}
         {...(hint && !open ? tip(hint, kbd, "top") : {})}
       >
-        {current?.icon && <current.icon size={14} className="pill-icon" />}
-        <span>{current?.name ?? `Select ${label.toLowerCase()}`}</span>
+        {children ?? (
+          <>
+            {current?.icon && <current.icon size={14} className="pill-icon" />}
+            <span>{current?.name ?? `Select ${label.toLowerCase()}`}</span>
+          </>
+        )}
         <ChevronDown size={13} className="pill-chev" />
       </button>
       {mounted && (
@@ -105,15 +125,16 @@ export function Picker<T extends string>({
             if (e.key === "Escape") onDone?.();
           }}
         >
-          {groups.map((g, i) => (
+          {shown.map((g, i) => (
             <div key={g.label ?? i} role="group" aria-label={g.label}>
               {g.label && <div className="menu-label">{g.label}</div>}
               {g.items.map((item) => (
                 <button
                   key={item.id}
+                  type="button"
                   role="option"
                   aria-selected={item.id === value}
-                  className={cx("menu-item", item.id === value && "selected")}
+                  className={cx("menu-item", item.id === value && "selected", item.danger && "danger")}
                   onPointerMove={(e) => e.currentTarget.focus({ preventScroll: true })}
                   onClick={() => {
                     setOpen(false);

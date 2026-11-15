@@ -18,8 +18,8 @@ const TERMINAL: PickerItem<Choice> = {
 };
 
 /**
- * How the agent sections work: Agent or Plan, and in Code also Terminal. Lives in
- * the composer, and in the terminal view's bar so there is always a way back.
+ * How the agent works where it has tools: Agent or Plan, and in Code also Terminal. Lives
+ * in the composer, and in the terminal view's bar so there is always a way back.
  */
 export function ModePicker({ onDone }: { onDone?: () => void }) {
   const section = useStore((s) => s.section);

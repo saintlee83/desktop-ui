@@ -26,7 +26,8 @@ export function Avatar({ name, size = 28 }: { name: string; size?: number }) {
         width: size,
         height: size,
         fontSize: Math.round(size * 0.4),
-        background: `linear-gradient(135deg, hsl(${hue} 70% 62%), hsl(${(hue + 40) % 360} 65% 48%))`,
+        // Graphite with a trace of a hue taken from the name: people differ, the palette stays quiet.
+        background: `linear-gradient(160deg, hsl(${hue} 9% 50%), hsl(${hue} 12% 27%))`,
       }}
     >
       {initials}

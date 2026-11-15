@@ -2,11 +2,11 @@
 
 export type ToolKind = "read" | "edit" | "bash" | "search" | "web";
 export type Mode = "chat" | "agent" | "plan";
-/** Top-level app section: plain conversations, agentic work in a workspace, or coding in a repository. */
-export type Section = "chat" | "work" | "code";
-/** Sections where the agent has tools: they get Agent/Plan modes, the terminal and the side panel. */
-export type AgentSection = Exclude<Section, "chat">;
-export const isAgentSection = (section: Section): section is AgentSection => section !== "chat";
+/**
+ * Top-level app section. Chat is the default: a plain conversation that turns
+ * into agent work once it is given a folder. Code is for coding in a repository.
+ */
+export type Section = "chat" | "code";
 
 export interface FileDiff {
   path: string;
@@ -41,6 +41,10 @@ export interface RunRequest {
   model: string;
   mode: Mode;
   history: { role: "user" | "assistant"; content: string }[];
+  /** The folder the agent works in, when the session has one. */
+  folder: string | null;
+  /** Standing instructions of the session's project. */
+  instructions: string | null;
 }
 
 export interface ModelInfo {
@@ -93,4 +97,19 @@ export interface Session {
   createdAt: number;
   updatedAt: number;
   messages: Message[];
+  /** The folder the agent works in. A chat with one is agent work: it has tools, modes and the terminal. */
+  folder?: string | null;
+  /** The project it is filed under, if any. */
+  projectId?: string | null;
+}
+
+/** A named place for related sessions, optionally tied to a folder and to standing instructions. */
+export interface Project {
+  id: string;
+  name: string;
+  /** New sessions in the project start in this folder. */
+  folder: string | null;
+  /** Sent along with every run in the project. */
+  instructions: string;
+  createdAt: number;
 }
