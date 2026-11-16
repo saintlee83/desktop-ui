@@ -2,6 +2,10 @@
 
 export type ToolKind = "read" | "edit" | "bash" | "search" | "web";
 export type Mode = "chat" | "agent" | "plan";
+/** Modes the agent works in once it has tools (a plain chat always runs in "chat" mode). */
+export type WorkMode = Exclude<Mode, "chat">;
+/** When the agent must ask before acting: always, not for edits, or never. */
+export type PermissionMode = "ask" | "acceptEdits" | "bypass";
 /**
  * Top-level app section. Chat is the default: a plain conversation that turns
  * into agent work once it is given a folder. Code is for coding in a repository.
@@ -25,6 +29,8 @@ export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "toolStart"; id: string; name: string; kind: ToolKind; input: string }
   | { type: "permissionRequest"; id: string; toolId: string; reason: string }
+  /** Output of a running tool so far, in pieces; `toolEnd` still carries all of it. */
+  | { type: "toolOutput"; id: string; delta: string }
   | {
       type: "toolEnd";
       id: string;
@@ -45,6 +51,15 @@ export interface RunRequest {
   folder: string | null;
   /** Standing instructions of the session's project. */
   instructions: string | null;
+  /** Files sent along with the prompt: a path on disk, or the content itself (text, or a data URL for an image). */
+  attachments?: AttachmentIn[];
+}
+
+export interface AttachmentIn {
+  name: string;
+  path?: string;
+  content?: string;
+  mime?: string;
 }
 
 export interface ModelInfo {
@@ -73,6 +88,8 @@ export type Part =
       diff?: FileDiff;
       permissionId?: string;
       reason?: string;
+      /** Its change was undone from the Changes panel. */
+      reverted?: boolean;
     };
 
 export type ToolPart = Extract<Part, { type: "tool" }>;
@@ -87,7 +104,25 @@ export interface Message {
   mode?: Mode;
   usage?: Usage;
   error?: string;
+  /** Names of attached files, as messages from before `files` kept them. */
   attachments?: string[];
+  files?: Attachment[];
+}
+
+/** A file attached to a message, as kept with it: what it was, not its content. */
+export interface Attachment {
+  name: string;
+  /** Where it is on disk, when it came from there. */
+  path?: string;
+  size?: number;
+  mime?: string;
+  /** A small preview of an image, as a data URL. */
+  thumb?: string;
+}
+
+/** A file about to be sent: what is kept, plus the content for files that have no path. */
+export interface PendingFile extends Attachment {
+  content?: string;
 }
 
 export interface Session {
@@ -101,6 +136,24 @@ export interface Session {
   folder?: string | null;
   /** The project it is filed under, if any. */
   projectId?: string | null;
+  /** Model and mode it runs with; missing: whatever the window has chosen (sessions from before they were per session). */
+  model?: string;
+  mode?: WorkMode;
+  /** Kept at the top of the list. */
+  pinned?: boolean;
+  /** Out of the list, under "Archived". */
+  archived?: boolean;
+  /** Finished while nobody was looking at it. */
+  unread?: boolean;
+  /** Tool calls approved for the rest of the session with "Always allow": a tool kind, or "bash:<command>". */
+  allow?: string[];
+}
+
+/** Text saved for reuse, inserted with /name in the composer. */
+export interface Snippet {
+  id: string;
+  name: string;
+  text: string;
 }
 
 /** A named place for related sessions, optionally tied to a folder and to standing instructions. */
@@ -112,4 +165,6 @@ export interface Project {
   /** Sent along with every run in the project. */
   instructions: string;
   createdAt: number;
+  /** Overrides the permission setting for the project's sessions; missing or null: the setting applies. */
+  permissionMode?: PermissionMode | null;
 }

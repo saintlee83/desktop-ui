@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, type LucideIcon } from "lucide-react";
+import { useT } from "../lib/i18n";
 import { cssZoom, cx, menuKeyDown, useClickOutside, usePresence } from "../lib/util";
 import { tip } from "./ui";
 
@@ -25,6 +26,10 @@ export interface PickerGroup<T extends string> {
  *
  * The menu may also hold actions rather than choices (the folder picker's "Choose folder…"):
  * then `value` matches no item, and `children` says what the pill shows.
+ *
+ * Callers pass text in the interface language. Group labels and descriptions are also looked
+ * up here, for lists built once from English constants (the CLIs); names are shown as given,
+ * since they are often folder or model names that must not be translated.
  */
 export function Picker<T extends string>({
   label,
@@ -56,6 +61,7 @@ export function Picker<T extends string>({
   /** The pill's content, in place of the current item's icon and name. */
   children?: ReactNode;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const { mounted, closing } = usePresence(open, 120);
   // Open toward whichever side has more room, capped to fit (the home composer sits mid-window).
@@ -100,13 +106,13 @@ export function Picker<T extends string>({
         onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`${label}: ${current?.name ?? "none"}`}
+        aria-label={`${label}: ${current?.name ?? t("none")}`}
         {...(hint && !open ? tip(hint, kbd, "top") : {})}
       >
         {children ?? (
           <>
             {current?.icon && <current.icon size={14} className="pill-icon" />}
-            <span>{current?.name ?? `Select ${label.toLowerCase()}`}</span>
+            <span>{current?.name ?? t("Select {label}", { label: label.toLowerCase() })}</span>
           </>
         )}
         <ChevronDown size={13} className="pill-chev" />
@@ -126,8 +132,8 @@ export function Picker<T extends string>({
           }}
         >
           {shown.map((g, i) => (
-            <div key={g.label ?? i} role="group" aria-label={g.label}>
-              {g.label && <div className="menu-label">{g.label}</div>}
+            <div key={g.label ?? i} role="group" aria-label={g.label && t(g.label)}>
+              {g.label && <div className="menu-label">{t(g.label)}</div>}
               {g.items.map((item) => (
                 <button
                   key={item.id}
@@ -149,7 +155,7 @@ export function Picker<T extends string>({
                   )}
                   <span className="menu-item-text">
                     <span>{item.name}</span>
-                    {item.description && <small>{item.description}</small>}
+                    {item.description && <small>{t(item.description)}</small>}
                   </span>
                   {item.meta && <span className="menu-item-meta">{item.meta}</span>}
                   <Check size={14} className="menu-check" />

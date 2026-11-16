@@ -101,11 +101,18 @@ fn place(req: &RunRequest) -> String {
 }
 
 /// A closing sentence for the first thought when the session's project has instructions.
+/// What the mock notes about the request besides the prompt: the project's instructions and
+/// the attached files.
 fn heed(req: &RunRequest) -> String {
-    match req.instructions.as_deref().map(str::trim) {
+    let mut out = match req.instructions.as_deref().map(str::trim) {
         Some(text) if !text.is_empty() => format!(" The project's instructions apply: \"{}\".", summarize(text)),
         _ => String::new(),
+    };
+    if !req.attachments.is_empty() {
+        let names: Vec<&str> = req.attachments.iter().map(|a| a.name.as_str()).collect();
+        out.push_str(&format!(" Attached: {}.", names.join(", ")));
     }
+    out
 }
 
 pub fn script(req: &RunRequest) -> Vec<Step> {

@@ -187,8 +187,19 @@ impl Run {
             }
         }
 
-        let jitter = self.next() % 400;
-        self.pause(tool.duration_ms + jitter).await?;
+        let total = tool.duration_ms + self.next() % 400;
+        if tool.kind == ToolKind::Bash && !tool.output.is_empty() {
+            // A command's output arrives as it runs, line by line.
+            let lines: Vec<&str> = tool.output.split_inclusive('\n').collect();
+            let step = total / (lines.len() as u64 + 1);
+            for line in lines {
+                self.pause(step).await?;
+                self.emit(AgentEvent::ToolOutput { id: id.clone(), delta: line.to_owned() })?;
+            }
+            self.pause(step).await?;
+        } else {
+            self.pause(total).await?;
+        }
         self.output_chars += tool.output.len() / 3;
         self.emit(AgentEvent::ToolEnd {
             id,

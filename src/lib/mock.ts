@@ -30,7 +30,9 @@ function script(req: RunRequest): Step[] {
   // Where the agent works, by name, and a nod to the project's instructions if it has any.
   const name = req.folder?.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
   const place = name ? `\`${name}\`` : "the codebase";
-  const heed = req.instructions?.trim() ? ` The project's instructions apply: "${req.instructions.trim().replace(/\s+/g, " ").slice(0, 80)}".` : "";
+  const heed =
+    (req.instructions?.trim() ? ` The project's instructions apply: "${req.instructions.trim().replace(/\s+/g, " ").slice(0, 80)}".` : "") +
+    (req.attachments?.length ? ` Attached: ${req.attachments.map((a) => a.name).join(", ")}.` : "");
   const grep: Step = {
     tool: {
       name: "Grep", kind: "search", input: `"normalizeTitle" in src/`, ms: 300,
@@ -139,7 +141,18 @@ export async function startRun(req: RunRequest, emit: (e: AgentEvent) => void): 
               break;
             }
           }
-          await sleep(t.ms + Math.random() * 400);
+          const total = t.ms + Math.random() * 400;
+          if (t.kind === "bash" && t.output) {
+            // A command's output arrives as it runs, line by line.
+            const lines = t.output.split(/(?<=\n)/);
+            for (const line of lines) {
+              await sleep(total / (lines.length + 1));
+              emit({ type: "toolOutput", id, delta: line });
+            }
+            await sleep(total / (lines.length + 1));
+          } else {
+            await sleep(total);
+          }
           emit({ type: "toolEnd", id, status: "ok", output: t.output, diff: t.diff ?? null });
         }
         await sleep(140);
