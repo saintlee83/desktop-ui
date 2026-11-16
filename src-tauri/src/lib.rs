@@ -3,6 +3,9 @@ mod folders;
 mod mock;
 mod protocol;
 mod pty;
+mod secrets;
+mod tray;
+mod workspace;
 
 /// Opens another app window: the main window's configuration under a fresh
 /// label, the size of the window that asked and offset from it so the two
@@ -39,14 +42,33 @@ async fn new_window(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resu
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // The native folder chooser behind "Choose folder…".
+    let builder = tauri::Builder::default()
+        // The native folder chooser behind "Choose folder…", and the save dialog for exports.
         .plugin(tauri_plugin_dialog::init())
+        // Links open in the default browser; "Reveal in Finder".
+        .plugin(tauri_plugin_opener::init())
+        // "The agent is done" / "waiting for approval" while the app is in the background.
+        .plugin(tauri_plugin_notification::init());
+    // The shortcut that brings the app up from anywhere (registered from Settings).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    builder
+        .setup(|app| {
+            #[cfg(desktop)]
+            tray::setup(app)?;
+            Ok(())
+        })
         .manage(agent::AgentState::default())
         .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             new_window,
             folders::folder_info,
+            workspace::list_files,
+            workspace::open_in_editor,
+            workspace::apply_patch,
+            workspace::save_text,
+            secrets::secret_set,
+            tray::tray_status,
             agent::list_models,
             agent::run_agent,
             agent::cancel_agent,

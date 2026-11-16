@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowDown,
   BookOpenText,
@@ -16,6 +16,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { folderName } from "../lib/folders";
+import { t, useT } from "../lib/i18n";
 import { homeFolder, kindOf, useActiveSession, useStore } from "../lib/store";
 import { cx, usePresence } from "../lib/util";
 import { MessageView } from "./MessageView";
@@ -29,10 +30,20 @@ import { Composer, type ComposerSeed } from "./Composer";
 /** The folder's name, set off from the sentence around it; a plain phrase when there is none. */
 const named = (folder: string | null, otherwise: string) => (folder ? <b>{folderName(folder)}</b> : otherwise);
 
+/** A translated sentence with `folder` (an element) standing where it says {folder}. */
+const withFolder = (text: string, folder: ReactNode) =>
+  text.split("{folder}").map((piece, i) => (
+    <Fragment key={i}>
+      {i > 0 && folder}
+      {piece}
+    </Fragment>
+  ));
+
+// Text here is English and translated when shown (`t` is called at render time).
 const HOME_COPY = {
   chat: {
     title: "How can I help you today?",
-    body: () => "Chat with any model. Add a folder and the agent can work in it.",
+    body: () => t("Chat with any model. Add a folder and the agent can work in it."),
     starters: [
       { icon: Lightbulb, label: "Brainstorm ideas", prompt: "Help me brainstorm ideas for " },
       { icon: GraduationCap, label: "Explain a concept", prompt: "Explain, step by step, how " },
@@ -42,7 +53,8 @@ const HOME_COPY = {
   },
   work: {
     title: "What should we work on?",
-    body: (folder: string | null) => <>The agent can read, edit and run commands in {named(folder, "your folder")}, with your approval.</>,
+    body: (folder: string | null) =>
+      withFolder(t("The agent can read, edit and run commands in {folder}, with your approval."), named(folder, t("your folder"))),
     starters: [
       { icon: FolderOpen, label: "Tidy up a folder", prompt: "Organize the files in " },
       { icon: FileText, label: "Summarize documents", prompt: "Read and summarize the documents in " },
@@ -52,9 +64,11 @@ const HOME_COPY = {
   },
   code: {
     title: "What are we building?",
-    body: (folder: string | null) => (
-      <>A coding agent for {named(folder, "your repository")}: it reads, edits and runs commands, and shows you every diff.</>
-    ),
+    body: (folder: string | null) =>
+      withFolder(
+        t("A coding agent for {folder}: it reads, edits and runs commands, and shows you every diff."),
+        named(folder, t("your repository")),
+      ),
     starters: [
       { icon: Bug, label: "Fix a bug", prompt: "Find and fix the bug where " },
       { icon: FlaskConical, label: "Write tests", prompt: "Write tests for " },
@@ -66,6 +80,7 @@ const HOME_COPY = {
 
 /** New-session screen: equal spacers above and below keep the composer vertically centered. */
 export function Home() {
+  const t = useT();
   const kind = useStore(kindOf);
   const folder = useStore(homeFolder);
   const project = useStore((s) => s.projects.find((p) => p.id === s.projectId) ?? null);
@@ -90,7 +105,7 @@ export function Home() {
               {project.name}
             </button>
           )}
-          <h1>{copy.title}</h1>
+          <h1>{t(copy.title)}</h1>
           <p>{copy.body(folder)}</p>
         </div>
       </div>
@@ -103,10 +118,10 @@ export function Home() {
               key={s.label}
               className="starter"
               style={{ "--i": i } as CSSProperties}
-              onClick={() => setSeed({ text: s.prompt, n: Date.now() })}
+              onClick={() => setSeed({ text: t(s.prompt), n: Date.now() })}
             >
               <s.icon size={14} />
-              {s.label}
+              {t(s.label)}
             </button>
           ))}
         </div>
@@ -116,6 +131,7 @@ export function Home() {
 }
 
 export function Thread() {
+  const t = useT();
   const session = useActiveSession();
   const running = useStore((s) => (s.activeId ? !!s.runs[s.activeId] : false));
   const ref = useRef<HTMLDivElement>(null);
@@ -181,7 +197,7 @@ export function Thread() {
       {jump.mounted && (
         <button
           className={cx("jump", jump.closing && "closing", running && "live")}
-          aria-label="Scroll to bottom"
+          aria-label={t("Scroll to bottom")}
           tabIndex={jump.closing ? -1 : 0}
           onClick={() => ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" })}
         >

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
+import { currentLang, t } from "./i18n";
 
 /** Counts view transitions, so a superseded one doesn't clear the marker of the one that replaced it. */
 let transitions = 0;
@@ -37,6 +38,16 @@ export function withViewTransition(update: () => void, kind: "dock" | "fade" = "
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
+/**
+ * A key press that belongs to an input method mid-composition (Korean, Japanese, Chinese…),
+ * such as the Enter that only confirms the syllable being typed. WebKit ends the composition
+ * before that keydown, so `isComposing` is already false there; keyCode 229 still tells.
+ */
+export const composing = (e: ReactKeyboardEvent | KeyboardEvent) => {
+  const native = "nativeEvent" in e ? e.nativeEvent : e;
+  return native.isComposing || native.keyCode === 229;
+};
+
 export const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Page-level CSS zoom (the browser fallback for the zoom setting). 1 inside Tauri, which zooms natively. */
@@ -50,27 +61,36 @@ export const mod = isMac ? "⌘" : "Ctrl+";
 export const modShift = isMac ? "⇧⌘" : "Ctrl+Shift+";
 export const zoomKeys = { in: isMac ? "⌘+" : "Ctrl +", out: isMac ? "⌘−" : "Ctrl −", reset: `${mod}0` };
 
+/**
+ * The locale dates are written in: the system's own when it speaks the interface language
+ * (keeping its regional format), otherwise the interface language.
+ */
+export function dateLocale(): string | undefined {
+  const lang = currentLang();
+  return typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith(lang) ? undefined : lang;
+}
+
 export function relativeTime(ts: number) {
   const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 60) return "now";
+  if (s < 60) return t("now");
   const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return t("{n}m", { n: m });
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return t("{n}h", { n: h });
   const d = Math.round(h / 24);
-  if (d < 7) return `${d}d`;
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (d < 7) return t("{n}d", { n: d });
+  return new Date(ts).toLocaleDateString(dateLocale(), { month: "short", day: "numeric" });
 }
 
 export function dateGroup(ts: number) {
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const today = startOfDay(new Date());
   const day = 86_400_000;
-  if (ts >= today) return "Today";
-  if (ts >= today - day) return "Yesterday";
-  if (ts >= today - 7 * day) return "Previous 7 days";
-  if (ts >= today - 30 * day) return "Previous 30 days";
-  return "Older";
+  if (ts >= today) return t("Today");
+  if (ts >= today - day) return t("Yesterday");
+  if (ts >= today - 7 * day) return t("Previous 7 days");
+  if (ts >= today - 30 * day) return t("Previous 30 days");
+  return t("Older");
 }
 
 export const formatTokens = (n: number) =>

@@ -1,17 +1,22 @@
 // Commands shared by keyboard shortcuts, the command palette and buttons.
 
 import { pickFolder } from "./folders";
-import { cliActive, inScope, isAgentic, messageText, useStore } from "./store";
+import { t, tn } from "./i18n";
+import { applyPatch, openInEditor, revealFile as revealInDir } from "./native";
+import { cliActive, currentFolder, inScope, isAgentic, messageText, sessionCli, sessionOnScreen, useStore } from "./store";
 import { toast } from "./toast";
 import type { WorkMode } from "./store";
-import type { Project, Session } from "./types";
-import { copyText } from "./util";
+import type { Project, Session, ToolPart } from "./types";
+import { basename, copyText } from "./util";
 import * as windows from "./windows";
 
 /** The sessions the sidebar lists (this section, this project), newest first. */
 function listed() {
   const s = useStore.getState();
-  return s.sessions.filter((x) => inScope(x, s)).sort((a, b) => b.updatedAt - a.updatedAt);
+  // Pinned first, as the sidebar shows them; archived ones are out of the list.
+  return s.sessions
+    .filter((x) => inScope(x, s) && !x.archived)
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
 }
 
 /** Deletes a session and offers to bring it back. */
@@ -19,8 +24,8 @@ export function deleteWithUndo(session: Session) {
   const s = useStore.getState();
   const wasActive = s.activeId === session.id;
   s.deleteSession(session.id);
-  toast(`Deleted “${session.title}”`, {
-    label: "Undo",
+  toast(t("Deleted “{title}”", { title: session.title }), {
+    label: t("Undo"),
     run: () => {
       const now = useStore.getState();
       now.restoreSession(session);
@@ -29,10 +34,18 @@ export function deleteWithUndo(session: Session) {
   });
 }
 
+/** Deletes several sessions and offers to bring them all back. */
+export function deleteManyWithUndo(sessions: Session[]) {
+  if (sessions.length === 1) return deleteWithUndo(sessions[0]);
+  const s = useStore.getState();
+  s.deleteSessions(sessions.map((x) => x.id));
+  toast(tn(sessions.length, "Deleted {n} session", "Deleted {n} sessions"), { label: t("Undo"), run: () => useStore.getState().restoreSessions(sessions) });
+}
+
 export function deleteActiveSession() {
   const s = useStore.getState();
-  const session = s.sessions.find((x) => x.id === s.activeId);
-  if (session && !cliActive(s)) deleteWithUndo(session);
+  const session = s.sessions.find((x) => x.id === sessionOnScreen(s));
+  if (session) deleteWithUndo(session);
 }
 
 /** Opens the session below (1) or above (-1) the current one in the sidebar. */
@@ -49,7 +62,7 @@ export async function copyLastResponse() {
   const s = useStore.getState();
   const session = s.sessions.find((x) => x.id === s.activeId);
   const reply = [...(session?.messages ?? [])].reverse().find((m) => m.role === "assistant" && messageText(m));
-  if (reply && (await copyText(messageText(reply)))) toast("Copied the last response");
+  if (reply && (await copyText(messageText(reply)))) toast(t("Copied the last response"));
 }
 
 // Focus moves a frame later, after whatever closed (palette, menu) has handed focus back.
@@ -78,9 +91,10 @@ export function toggleTheme() {
 
 /** Asks for a folder and gives it to the open session, or to the one about to start. */
 export async function addFolder() {
-  if (cliActive(useStore.getState())) return;
+  const s = useStore.getState();
+  if (cliActive(s) && !sessionCli(s)) return;
   const folder = await pickFolder().catch((e) => {
-    toast(`Couldn't open the folder chooser: ${e}`);
+    toast(t("Couldn't open the folder chooser: {error}", { error: String(e) }));
     return null;
   });
   if (folder) useStore.getState().setFolder(folder);
@@ -88,20 +102,20 @@ export async function addFolder() {
 }
 
 /** A plain chat has no modes: they come with a folder. */
-const needsFolder = () => toast("Add a folder to use Agent and Plan modes", { label: "Add folder", run: () => void addFolder() });
+const needsFolder = () => toast(t("Add a folder to use Agent and Plan modes"), { label: t("Add folder"), run: () => void addFolder() });
 
 /** Agent ↔ Plan. */
 export function toggleMode() {
   const s = useStore.getState();
-  if (cliActive(s)) return;
+  if (cliActive(s) && !sessionCli(s)) return;
   if (!isAgentic(s)) needsFolder();
   else s.setMode(s.mode === "agent" ? "plan" : "agent");
 }
 
-/** Picks Agent or Plan, coming out of Code's terminal view if need be. */
+/** Picks Agent or Plan, coming out of Code's terminal view if it runs another CLI (the session's own takes modes too). */
 export function chooseMode(mode: WorkMode) {
   const s = useStore.getState();
-  if (cliActive(s)) s.setCodeView("gui");
+  if (cliActive(s) && !sessionCli(s)) s.setCodeView("gui");
   if (!isAgentic(useStore.getState())) return void needsFolder();
   s.setMode(mode);
 }
@@ -112,8 +126,8 @@ export function deleteProjectWithUndo(project: Project) {
   const wasOpen = s.projectId === project.id;
   const filed = s.sessions.filter((x) => x.projectId === project.id).map((x) => x.id);
   s.deleteProject(project.id);
-  toast(`Deleted project “${project.name}”`, {
-    label: "Undo",
+  toast(t("Deleted project “{name}”", { name: project.name }), {
+    label: t("Undo"),
     run: () => {
       const now = useStore.getState();
       now.restoreProject(project, filed);
@@ -129,5 +143,55 @@ export function toggleCli() {
 }
 
 export function newWindow() {
-  windows.newWindow().catch((e) => toast(`Couldn't open a window: ${e}`));
+  windows.newWindow().catch((e) => toast(t("Couldn't open a window: {error}", { error: String(e) })));
+}
+
+// ---------------- files the agent touched ----------------
+
+/** The open session's folder, or a toast saying there is none. */
+function folderOrSay(): string | null {
+  const folder = currentFolder(useStore.getState());
+  if (!folder) toast(t("This session has no folder"));
+  return folder;
+}
+
+/** Opens a file of the open session's folder in the editor chosen in Settings. */
+export function openFile(path: string) {
+  const folder = folderOrSay();
+  if (!folder) return;
+  openInEditor(folder, path, useStore.getState().settings.editor ?? null).catch((e) => toast(t("Couldn't open {file}: {error}", { file: basename(path), error: String(e) })));
+}
+
+/** Shows a file of the open session's folder in Finder. */
+export function revealFile(path: string) {
+  const folder = folderOrSay();
+  if (!folder) return;
+  revealInDir(folder, path).catch((e) => toast(t("Couldn't show {file}: {error}", { file: basename(path), error: String(e) })));
+}
+
+/**
+ * Undoes the agent's changes to one file (newest first), or with `redo` puts them back
+ * (oldest first). Stops at the first that no longer applies; the ones done are marked.
+ */
+export async function revertChanges(sessionId: string, path: string, tools: ToolPart[], redo = false) {
+  const folder = folderOrSay();
+  if (!folder) return;
+  const order = redo ? tools : [...tools].reverse();
+  const done: string[] = [];
+  for (const tool of order) {
+    if (!tool.diff) continue;
+    try {
+      await applyPatch(folder, path, tool.diff.patch, !redo);
+      done.push(tool.id);
+    } catch (e) {
+      const vars = { file: basename(path), error: String(e) };
+      toast(redo ? t("Couldn't reapply {file}: {error}", vars) : t("Couldn't revert {file}: {error}", vars));
+      break;
+    }
+  }
+  if (!done.length) return;
+  useStore.getState().markReverted(sessionId, done, !redo);
+  const changed = tools.filter((tool) => done.includes(tool.id));
+  if (redo) toast(t("Reapplied the changes to {file}", { file: basename(path) }));
+  else toast(t("Reverted {file}", { file: basename(path) }), { label: t("Undo"), run: () => void revertChanges(sessionId, path, changed, true) });
 }

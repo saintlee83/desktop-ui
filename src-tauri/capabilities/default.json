@@ -7,7 +7,17 @@
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-destroy",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
     "dialog:allow-open",
+    "dialog:allow-save",
+    "opener:default",
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered",
     "core:webview:allow-set-webview-zoom"
   ]
 }

@@ -67,6 +67,12 @@ pub enum AgentEvent {
         tool_id: String,
         reason: String,
     },
+    /// Output a running tool has produced so far, sent in pieces as it comes (the final
+    /// `ToolEnd` still carries all of it).
+    ToolOutput {
+        id: String,
+        delta: String,
+    },
     ToolEnd {
         id: String,
         status: ToolStatus,
@@ -116,6 +122,26 @@ pub struct RunRequest {
     #[serde(default)]
     #[allow(dead_code)]
     pub instructions: Option<String>,
+    /// Files sent with the prompt.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+/// A file sent with a prompt: on disk (`path`), or carried along (`content`: text, or a data
+/// URL for an image).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub content: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub mime: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,6 +181,9 @@ mod tests {
             json!({ "type": "done", "usage": { "inputTokens": 1, "outputTokens": 2 }, "stopReason": "endTurn" })
         );
 
+        let ev = AgentEvent::ToolOutput { id: "t".into(), delta: "ok\n".into() };
+        assert_eq!(serde_json::to_value(ev).unwrap(), json!({ "type": "toolOutput", "id": "t", "delta": "ok\n" }));
+
         let ev = AgentEvent::ToolEnd {
             id: "t".into(),
             status: ToolStatus::Ok,
@@ -185,5 +214,14 @@ mod tests {
         .unwrap();
         assert_eq!(req.folder.as_deref(), Some("/work/site"));
         assert_eq!(req.instructions, None);
+        assert!(req.attachments.is_empty());
+
+        let req: RunRequest = serde_json::from_value(json!({
+            "sessionId": "s", "prompt": "hi", "model": "m", "mode": "chat",
+            "attachments": [{ "name": "a.png", "content": "data:image/png;base64,AA==", "mime": "image/png" }, { "name": "b.rs", "path": "/x/b.rs" }]
+        }))
+        .unwrap();
+        assert_eq!(req.attachments.len(), 2);
+        assert_eq!(req.attachments[1].path.as_deref(), Some("/x/b.rs"));
     }
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { inTauri } from "./agent";
+import { t } from "./i18n";
 
 /** Mirrors `FolderInfo` in src-tauri/src/folders.rs. */
 export interface FolderInfo {
@@ -39,7 +40,7 @@ function pickWithInput(): Promise<string | null> {
  */
 export async function pickFolder(): Promise<string | null> {
   if (inTauri) {
-    const picked = await open({ directory: true, multiple: false, title: "Choose a folder" });
+    const picked = await open({ directory: true, multiple: false, title: t("Choose a folder") });
     return typeof picked === "string" ? picked : null;
   }
   const picker = (window as { showDirectoryPicker?: DirectoryPicker }).showDirectoryPicker;

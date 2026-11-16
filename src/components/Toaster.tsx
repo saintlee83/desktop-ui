@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { useT } from "../lib/i18n";
 import { useToasts, type Toast } from "../lib/toast";
 import { cx } from "../lib/util";
 
@@ -7,6 +8,7 @@ const LIFETIME = 5000;
 const EXIT_MS = 180;
 
 function ToastItem({ toast }: { toast: Toast }) {
+  const t = useT();
   const dismiss = useToasts((s) => s.dismiss);
   const [closing, setClosing] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -16,17 +18,17 @@ function ToastItem({ toast }: { toast: Toast }) {
   useEffect(() => {
     if (closing || paused) return;
     const started = performance.now();
-    const t = setTimeout(() => setClosing(true), remaining.current);
+    const timer = setTimeout(() => setClosing(true), remaining.current);
     return () => {
-      clearTimeout(t);
+      clearTimeout(timer);
       remaining.current = Math.max(1200, remaining.current - (performance.now() - started));
     };
   }, [closing, paused]);
 
   useEffect(() => {
     if (!closing) return;
-    const t = setTimeout(() => dismiss(toast.id), EXIT_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => dismiss(toast.id), EXIT_MS);
+    return () => clearTimeout(timer);
   }, [closing, dismiss, toast.id]);
 
   return (
@@ -50,7 +52,7 @@ function ToastItem({ toast }: { toast: Toast }) {
           {toast.action.label}
         </button>
       )}
-      <button className="toast-close" aria-label="Dismiss" onClick={() => setClosing(true)}>
+      <button className="toast-close" aria-label={t("Dismiss")} onClick={() => setClosing(true)}>
         <X size={13} />
       </button>
     </div>

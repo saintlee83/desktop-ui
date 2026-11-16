@@ -10,9 +10,10 @@ import {
   type ReactNode,
 } from "react";
 import { Check, Copy, type LucideIcon } from "lucide-react";
+import { useT } from "../lib/i18n";
 import { copyText, cssZoom, cx, usePresence } from "../lib/util";
 
-/** Tooltip props for any element: text plus an optional shortcut. Rendered by <Tooltips />. */
+/** Tooltip props for any element: text (already translated) plus an optional shortcut. Rendered by <Tooltips />. */
 export const tip = (text: string, kbd?: string, side?: "top" | "bottom") => ({
   "data-tip": text,
   "data-tip-kbd": kbd,
@@ -73,22 +74,24 @@ export function Keys({ combo, className }: { combo: string; className?: string }
 }
 
 export function Spinner({ size = 14 }: { size?: number }) {
-  return <span className="spinner" style={{ width: size, height: size }} role="status" aria-label="Loading" />;
+  const t = useT();
+  return <span className="spinner" style={{ width: size, height: size }} role="status" aria-label={t("Loading")} />;
 }
 
 /** Copy button whose icon flips to a check for a moment after a successful copy. */
 export function CopyButton({ text, className = "msg-action", size = 14 }: { text: string | (() => string); className?: string; size?: number }) {
+  const t = useT();
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (!done) return;
-    const t = setTimeout(() => setDone(false), 1400);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDone(false), 1400);
+    return () => clearTimeout(timer);
   }, [done]);
   return (
     <button
       className={cx(className, done && "done")}
-      aria-label="Copy"
-      {...tip(done ? "Copied" : "Copy")}
+      aria-label={t("Copy")}
+      {...tip(done ? t("Copied") : t("Copy"))}
       onClick={async (e) => {
         e.stopPropagation();
         if (await copyText(typeof text === "function" ? text() : text)) setDone(true);

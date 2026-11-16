@@ -1,5 +1,6 @@
 import { Folder, FolderOpen, FolderPlus, FolderX, GitBranch, X } from "lucide-react";
 import { folderName, pickFolder, shortPath, useFolderInfo } from "../lib/folders";
+import { useT } from "../lib/i18n";
 import { useStore } from "../lib/store";
 import { toast } from "../lib/toast";
 import { cx } from "../lib/util";
@@ -18,7 +19,7 @@ export function FolderPicker({
   folder,
   onChange,
   align = "left",
-  empty = "Add folder",
+  empty,
   hint,
   kbd,
   removable = true,
@@ -27,29 +28,30 @@ export function FolderPicker({
   folder: string | null;
   onChange: (folder: string | null) => void;
   align?: "left" | "right";
-  /** What the pill says when there is no folder. */
+  /** What the pill says when there is no folder ("Add folder" by default). */
   empty?: string;
   hint?: string;
   kbd?: string;
   removable?: boolean;
   onDone?: () => void;
 }) {
+  const t = useT();
   const recents = useStore((s) => s.recentFolders);
   const info = useFolderInfo(folder);
   const missing = !!folder && info?.isDir === false;
   const listed = folder && !recents.includes(folder) ? [folder, ...recents] : recents;
 
   const groups: PickerGroup<string>[] = [
-    { items: [{ id: CHOOSE, name: folder ? "Choose another folder…" : "Choose folder…", icon: FolderOpen }] },
+    { items: [{ id: CHOOSE, name: folder ? t("Choose another folder…") : t("Choose folder…"), icon: FolderOpen }] },
     ...(listed.length
-      ? [{ label: "Recent", items: listed.map((path) => ({ id: recent(path), name: folderName(path), description: shortPath(path), icon: Folder })) }]
+      ? [{ label: t("Recent"), items: listed.map((path) => ({ id: recent(path), name: folderName(path), description: shortPath(path), icon: Folder })) }]
       : []),
-    ...(folder && removable ? [{ items: [{ id: REMOVE, name: "Remove folder", icon: X, danger: true }] }] : []),
+    ...(folder && removable ? [{ items: [{ id: REMOVE, name: t("Remove folder"), icon: X, danger: true }] }] : []),
   ];
 
   const choose = async (id: string) => {
     if (id === REMOVE) return onChange(null);
-    const picked = id === CHOOSE ? await pickFolder().catch((e) => void toast(`Couldn't open the folder chooser: ${e}`)) : id.slice(recent("").length);
+    const picked = id === CHOOSE ? await pickFolder().catch((e) => void toast(t("Couldn't open the folder chooser: {error}", { error: String(e) }))) : id.slice(recent("").length);
     if (!picked) return;
     useStore.getState().rememberFolder(picked);
     onChange(picked);
@@ -59,18 +61,18 @@ export function FolderPicker({
   return (
     <Picker
       className={cx("folder-picker", folder ? "has-folder" : "is-empty", missing && "is-missing")}
-      label="Folder"
+      label={t("Folder")}
       align={align}
       width={300}
       value={folder ? recent(folder) : ""}
       groups={groups}
-      hint={missing ? "This folder can't be found" : (hint ?? (folder ? shortPath(folder) : "Give the agent a folder to work in"))}
+      hint={missing ? t("This folder can't be found") : (hint ?? (folder ? shortPath(folder) : t("Give the agent a folder to work in")))}
       kbd={missing ? undefined : kbd}
       onChange={(id) => void choose(id).then(onDone)}
       onDone={onDone}
     >
       <Icon size={14} className="pill-icon" />
-      <span className="folder-name">{folder ? folderName(folder) : empty}</span>
+      <span className="folder-name">{folder ? folderName(folder) : (empty ?? t("Add folder"))}</span>
       {info?.branch && !missing && (
         <span className="folder-branch">
           <GitBranch size={11} />

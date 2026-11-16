@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as actions from "./lib/actions";
 import { PANEL_W, SIDEBAR_W, cliActive, isAgentic, useStore } from "./lib/store";
@@ -8,6 +8,8 @@ import { useApplyTheme } from "./lib/theme";
 import type { ToolPart } from "./lib/types";
 import { cssZoom, cx, isMac } from "./lib/util";
 import { onWindowClose } from "./lib/windows";
+import { startAttention } from "./lib/attention";
+import { setLanguage, useT } from "./lib/i18n";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Home, Thread } from "./components/Thread";
@@ -158,7 +160,8 @@ function useShortcuts() {
             b: () => s.toggleSidebar(),
             j: () => s.togglePanel(),
             o: () => void actions.addFolder(),
-            f: actions.focusSearch,
+            // In a terminal ⌘F finds in its output (see createXterm).
+            ...(inTerminal ? {} : { f: actions.focusSearch }),
             l: actions.focusComposer,
             // ⌘1 / ⌘2 jump to a section.
             ...Object.fromEntries(SECTIONS.map((sec) => [sec.key, () => s.setSection(sec.id)])),
@@ -177,6 +180,7 @@ function useShortcuts() {
 }
 
 export default function App() {
+  const t = useT();
   const loadModels = useStore((s) => s.loadModels);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
@@ -187,8 +191,12 @@ export default function App() {
   const panelOpen = useStore((s) => s.panelOpen && isAgentic(s) && !cliActive(s));
   const hasSession = useStore((s) => s.sessions.some((x) => x.id === s.activeId));
   const cli = useStore(cliActive);
+  const code = useStore((s) => s.section === "code");
   useApplyTheme();
   useZoom();
+  // The Language setting; "System" follows the system's preferred languages.
+  const language = useStore((s) => s.settings.language);
+  useLayoutEffect(() => setLanguage(language), [language]);
   useShortcuts();
 
   useEffect(() => {
@@ -198,13 +206,21 @@ export default function App() {
   // A closing window stops its runs and shells, so other windows aren't left showing them as live.
   useEffect(() => onWindowClose(() => useStore.getState().shutdown()), []);
 
+  // Dock badge, menu bar status, the global shortcut.
+  useEffect(() => startAttention(), []);
+
   const setVar = (name: string) => (px: number) => app.current?.style.setProperty(name, `${px}px`);
-  const widths = { "--sidebar-w-user": `${sidebarWidth}px`, "--panel-w-user": `${panelWidth}px` } as CSSProperties;
+  const codeSize = useStore((s) => s.settings.codeFontSize);
+  const widths = {
+    "--sidebar-w-user": `${sidebarWidth}px`,
+    "--panel-w-user": `${panelWidth}px`,
+    ...(codeSize ? { "--code-size": `${codeSize}px` } : {}),
+  } as CSSProperties;
 
   return (
     <div
       ref={app}
-      className={cx("app", isMac && "platform-mac", sidebarOpen && "sidebar-open", panelOpen && "panel-open")}
+      className={cx("app", isMac && "platform-mac", code && "section-code", sidebarOpen && "sidebar-open", panelOpen && "panel-open")}
       style={widths}
     >
       <TitleBar />
@@ -213,7 +229,7 @@ export default function App() {
         {sidebarOpen && (
           <ColResizer
             edge="right"
-            label="Resize sidebar"
+            label={t("Resize sidebar")}
             width={sidebarWidth}
             min={SIDEBAR_W[0]}
             max={() => SIDEBAR_W[2]}
@@ -225,7 +241,7 @@ export default function App() {
         {panelOpen && (
           <ColResizer
             edge="left"
-            label="Resize side panel"
+            label={t("Resize side panel")}
             width={panelWidth}
             min={PANEL_W[0]}
             // Leave the conversation at least 420px.
@@ -236,8 +252,12 @@ export default function App() {
           />
         )}
         <main className="main">
-          {/* Hidden, not unmounted, behind Code's terminal view: the draft and scroll position survive. */}
-          <div className="main-content" hidden={cli}>
+          {/*
+            Behind Code's terminal view the chat stays mounted and laid out, only invisible and inert:
+            the draft survives, the thread keeps following what the session does, and its animations
+            don't start over when it comes back (as they would from display: none).
+          */}
+          <div className={cx("main-content", cli && "offstage")} inert={cli}>
             {hasSession ? (
               <>
                 <Thread />

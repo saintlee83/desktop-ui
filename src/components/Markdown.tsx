@@ -2,6 +2,9 @@ import { memo, useRef, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { t } from "../lib/i18n";
+import { openUrl } from "../lib/native";
+import { toast } from "../lib/toast";
 import { CopyButton } from "./ui";
 
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -23,8 +26,18 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
 const components: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  // Links leave the app for the default browser; anything but a web or mail link stays inert.
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer">
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={href}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href && /^(https?:|mailto:)/i.test(href)) openUrl(href).catch((err) => toast(t("Couldn't open the link: {error}", { error: String(err) })));
+      }}
+    >
       {children}
     </a>
   ),
